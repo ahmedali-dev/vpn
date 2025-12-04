@@ -1,0 +1,4 @@
+./v2ray -mode v2ray \
+  -v2ray-link "vmess://eyJhZGQiOiJkZS12MnJheS5mcmVldm1lc3MuY29tIiwiYWlkIjoiMCIsInNjeSI6ImF1dG8iLCJob3N0IjoiIiwiaWQiOiJmNWQ3ZGUyNi0wNzE2LTRlZGUtOGZhNy1iYWNjMDYxZGJhZTUiLCJuZXQiOiJ0Y3AiLCJwYXRoIjoiIiwicG9ydCI6IjIwODMiLCJwcyI6ImRlLXYycmF5LmZyZWV2bWVzcy5jb20tNXRvbXJlcmMiLCJ0bHMiOiJ0bHMiLCJzbmkiOiJ3ZWIud2hhdHNhcHAuY29tIiwidHlwZSI6Im5vbmUiLCJmcCI6ImNocm9tZSIsInYiOiIyIn0=" \
+  -pac-port 8080
+
