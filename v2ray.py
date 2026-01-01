@@ -3,7 +3,7 @@ import json, subprocess, time, socket, tempfile, os, requests
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-INPUT = "work.txt"
+INPUT = "subdomains.txt"
 OUTPUT = "final_working.txt"
 GOOGLE_URL = "https://www.google.com"
 BASE_PORT = 25000
