@@ -1,0 +1,46 @@
+{
+    "log": {
+        "loglevel": "warning"
+    },
+    "inbounds": [
+        {
+            "port": 10800,
+            "listen": "127.0.0.1",
+            "protocol": "socks",
+            "settings": {
+                "udp": true
+            }
+        }
+    ],
+    "outbounds": [
+        {
+            "protocol": "vmess",
+            "settings": {
+                "vnext": [
+                    {
+                        "address": "adde.stc.com.sa",
+                        "port": 2083,
+                        "users": [
+                            {
+                                "id": "f5d7de26-0716-4ede-8fa7-bacc061dbae5",
+                                "security": "auto"
+                            }
+                        ]
+                    }
+                ]
+            },
+            "streamSettings": {
+                "network": "tcp",
+                "security": "tls",
+                "tlsSettings": {
+                    "fingerprint": "chrome",
+                    "alpn": [
+                        "h3",
+                        "h2",
+                        "http/1.1"
+                    ]
+                }
+            }
+        }
+    ]
+}

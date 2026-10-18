@@ -1,0 +1,4 @@
+./v2ray -mode v2ray \
+  -v2ray-link "" \
+  -pac-port 8080
+

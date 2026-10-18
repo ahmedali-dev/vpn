@@ -1,0 +1,5 @@
+'use strict';
+const packager=require('@electron/packager');
+const path=require('node:path');
+const fs=require('node:fs/promises');
+async function main(){const root=path.resolve(__dirname,'..');let targets=[['win32','x64'],['linux','x64'],['darwin','arm64'],['darwin','x64']];if(process.env.TUNNEL_PACKAGE_TARGET)targets=targets.filter(([platform,arch])=>platform+'-'+arch===process.env.TUNNEL_PACKAGE_TARGET);for(const [platform,arch] of targets){const key=platform+'-'+arch;const runtime=path.join(root,'dist/runtime',key);await fs.access(runtime);const paths=await packager({dir:__dirname,name:'Tunnel Desktop',appBundleId:'org.tunnel.desktop',appVersion:require('./package.json').version,electronVersion:require('./package.json').devDependencies.electron,platform,arch,out:path.join(root,'dist/desktop'),overwrite:true,asar:true,prune:true,extraResource:[runtime],ignore:[/^\/ui($|\/)/,/^\/package\.cjs$/,/^\/.*\.test\.cjs$/],win32metadata:{CompanyName:'Tunnel Desktop',FileDescription:'SSH TLS and Xray Tunnel',ProductName:'Tunnel Desktop'}});console.log('Packaged',key,paths.join(', '));}}main().catch(error=>{console.error(error);process.exitCode=1});
