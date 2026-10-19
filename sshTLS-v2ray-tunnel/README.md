@@ -1,4 +1,8 @@
-# Tunnel Desktop
+# TunnelNest
+
+![TunnelNest Safe Flight logo](desktop/assets/tunnelnest.png)
+
+**TunnelNest** uses the selected **Safe Flight** identity: a folded home-shaped ribbon and forward arrow in sage green and charcoal. Branding notes are in [TunnelNest.md](../TunnelNest.md).
 
 A desktop and command-line client for SSH over TLS, VMess, VLESS, Trojan, and manual Shadowsocks configurations. Desktop packages target Windows x64, Linux x64, and macOS Apple Silicon/Intel, with Xray and sing-box included.
 
