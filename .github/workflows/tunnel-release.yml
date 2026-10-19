@@ -1,0 +1,170 @@
+name: Tunnel Desktop Release
+
+'on':
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tunnel-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2022
+            target: win32-x64
+          - runner: ubuntu-24.04
+            target: linux-x64
+          - runner: macos-15
+            target: darwin-arm64
+          - runner: macos-15-intel
+            target: darwin-x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+        working-directory: sshTLS-v2ray-tunnel
+    env:
+      TUNNEL_PACKAGE_TARGET: ${{ matrix.target }}
+      CGO_ENABLED: '0'
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /.github/
+            /sshTLS-v2ray-tunnel/
+            !/sshTLS-v2ray-tunnel/dist/
+            !/sshTLS-v2ray-tunnel/tunnel
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: sshTLS-v2ray-tunnel/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: sshTLS-v2ray-tunnel/desktop/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate tag and version
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          version=json.loads(Path('desktop/package.json').read_text())['version']
+          if os.environ['GITHUB_REF_TYPE']=='tag':
+              assert os.environ['GITHUB_REF_NAME']=='v'+version, 'Tag must match desktop/package.json'
+          PY
+      - name: Install desktop dependencies
+        run: npm ci --prefix desktop
+      - name: Test engine and desktop logic
+        run: |
+          go test ./...
+          node --test desktop/import.test.cjs desktop/startup.test.cjs
+          node --check desktop/ui/app.js
+      - name: Build native engine
+        run: python scripts/build.py
+      - name: Fetch verified networking cores
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/fetch-cores.py
+      - name: Smoke test bundled executables
+        run: |
+          python - <<'PY'
+          import os, subprocess
+          from pathlib import Path
+          runtime=Path('dist/runtime')/os.environ['TUNNEL_PACKAGE_TARGET']
+          suffix='.exe' if os.name=='nt' else ''
+          for executable,args in [('tunnel',['-h']),('cores/xray',['version']),('cores/sing-box',['version'])]:
+              subprocess.run([str((runtime/(executable+suffix)).resolve()),*args],check=True,timeout=30)
+          PY
+      - name: Package desktop
+        run: npm --prefix desktop run package
+      - name: Include Windows startup diagnostics
+        if: matrix.target == 'win32-x64'
+        run: python scripts/windows-release.py
+      - name: Archive desktop and CLI
+        run: |
+          python scripts/archive.py
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          for path in Path('dist/releases').glob('*/SHA256SUMS.txt'):
+              path.rename(path.with_name('SHA256SUMS-'+os.environ['TUNNEL_PACKAGE_TARGET']+'.txt'))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tunnel-${{ matrix.target }}
+          path: sshTLS-v2ray-tunnel/dist/releases/*/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  release:
+    name: Publish GitHub release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /sshTLS-v2ray-tunnel/release-notes/
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: tunnel-*
+          path: release-assets
+          merge-multiple: true
+      - name: Verify and combine checksums
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib
+          folder=Path('release-assets')
+          records=[]
+          manifests=list(folder.glob('SHA256SUMS-*.txt'))
+          assert len(manifests)==4, 'Missing platform checksum manifests'
+          for manifest in manifests:
+              for line in manifest.read_text().splitlines():
+                  digest,name=line.split('  ',1)
+                  asset=folder/name
+                  assert asset.is_file(), 'Missing asset: '+name
+                  actual=hashlib.file_digest(asset.open('rb'),'sha256').hexdigest()
+                  assert actual==digest, 'Checksum mismatch: '+name
+                  records.append(line)
+          assert len(records)==8 and len(set(records))==8, 'Expected four desktop and four CLI archives'
+          (folder/'SHA256SUMS.txt').write_text('\n'.join(sorted(records))+'\n')
+          for manifest in manifests: manifest.unlink()
+          PY
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_COMMIT: ${{ github.sha }}
+        shell: bash
+        run: |
+          notes="sshTLS-v2ray-tunnel/release-notes/$RELEASE_TAG.md"
+          test -f "$notes"
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --verify-tag --target "$RELEASE_COMMIT" --title "Tunnel Desktop $RELEASE_TAG" --notes-file "$notes" --draft
+          fi
+          gh release upload "$RELEASE_TAG" release-assets/* --clobber
+          gh release edit "$RELEASE_TAG" --draft=false --latest --title "Tunnel Desktop $RELEASE_TAG" --notes-file "$notes"

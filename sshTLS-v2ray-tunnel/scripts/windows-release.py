@@ -65,9 +65,9 @@ If the app still does not open:
 No administrator privileges are needed to open the app or use proxy mode.
 Full-device VPN asks for administrator authorization separately when enabled.
 
-This build is unsigned. It has been cross-built and inspected on macOS, not
-executed on a Windows machine. Diagnostics are included to identify platform
-startup failures; they are not proof that the reported failure is fixed.
+This build is unsigned. GitHub Actions builds and tests the engine on Windows.
+A successful automated build does not verify interactive GUI startup, server
+connectivity, or administrator-approved TUN routing on your machine.
 '''.replace('VERSION',VERSION))
 shutil.copy2(ROOT/'README.md',folder/'README.md')
 output=ROOT/'dist/downloads'/('TunnelDesktop-windows-x64-'+VERSION+'.zip')

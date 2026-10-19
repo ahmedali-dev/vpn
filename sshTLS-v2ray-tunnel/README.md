@@ -4,6 +4,10 @@ A desktop and command-line client for SSH over TLS, VMess, VLESS, Trojan, and ma
 
 ## Desktop
 
+Version 1.2.0 uses the Soft Workspace interface: warm white and lavender profile cards, search and protocol filters, a connection summary, and live logs inside the selected profile card. Create, edit, run, or delete profiles from the main screen. The profile editor includes custom keyboard-accessible dropdowns, TLS version selection, editable VMess transport fields, and SSH settings.
+
+An absent SNI and Host leave the SNI input blank; the automatic TLS name is shown separately. Explicit SNI takes priority, followed by a VMess WebSocket Host, then the server address. Saved profiles preserve routing, binary paths, and TLS settings.
+
 Extract a desktop archive and launch **Tunnel Desktop**. Paste a VMess/VLESS/Trojan share link, choose proxy or full-device VPN, then press **Connect**. For VMess TLS over WebSocket, a missing SNI falls back to the WebSocket Host before the provider address, matching NetMod exports. Explicit SNI always takes priority. Host, path, and effective SNI are shown in the interface. Missing fingerprint and ALPN settings are left unset.
 
 Link imports preserve SNI, WebSocket host/path, gRPC service, fingerprint, ALPN, and VLESS REALITY parameters. Desktop profiles are stored locally in a per-user SQLite database with restrictive file permissions; profile arguments, including SSH passwords when saved, never leave the device.
@@ -107,3 +111,9 @@ For a server that works only with certificate verification disabled, select **Ce
 Compatibility mode fetches the certificate using your configured SNI without checking expiry, hostname, or CA trust, then passes its SHA-256 leaf pin to Xray. It keeps that pin in memory across core restarts until you disconnect; a new connection fetches a new pin. The initial certificate is unauthenticated and can be supplied by an impersonator. This does not establish the provider's identity or repair its expired certificate. Prefer a renewed certificate or a provider-verified manual pin. SSH verification is unchanged.
 
 SSH profiles also support the explicit `-ssh-cert-sha256 insecure` compatibility setting for servers that expose an expired, self-signed, or mismatched TLS certificate. The secure default remains automatic verification; use compatibility mode only when you accept that the initial TLS certificate is unauthenticated.
+
+## GitHub Actions releases
+
+The repository-root `Tunnel Desktop Release` workflow builds each desktop package on its matching Windows, Linux, or macOS runner. Push a `v*` tag that matches `desktop/package.json` (for example, `v1.2.0`) to run tests, fetch checksum-verified cores, package desktop and CLI archives, and publish the release with a combined `SHA256SUMS.txt`. All four platform jobs must succeed before publication. A manual workflow run builds downloadable workflow artifacts without publishing a release.
+
+Release notes live in `release-notes/<tag>.md`. Each platform archive includes its engine and networking cores. Interactive GUI startup and administrator-approved full-device routing still require platform testing.
