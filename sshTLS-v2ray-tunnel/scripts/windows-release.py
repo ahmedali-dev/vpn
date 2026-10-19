@@ -71,6 +71,7 @@ connectivity, or administrator-approved TUN routing on your machine.
 '''.replace('VERSION',VERSION))
 shutil.copy2(ROOT/'README.md',folder/'README.md')
 output=ROOT/'dist/downloads'/('TunnelDesktop-windows-x64-'+VERSION+'.zip')
+output.parent.mkdir(parents=True,exist_ok=True)
 with zipfile.ZipFile(output,'w',zipfile.ZIP_DEFLATED) as archive:
  for path in sorted(folder.rglob('*')):
   if path.is_file():archive.write(path,path.relative_to(folder.parent))
