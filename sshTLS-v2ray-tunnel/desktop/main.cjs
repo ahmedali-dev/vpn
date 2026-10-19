@@ -6,18 +6,20 @@ const os=require('node:os');
 const fs=require('node:fs/promises');
 const http=require('node:http');
 const {createStartupLogger,checkBundle}=require('./startup.cjs');
+// Keep existing Electron preferences while changing the visible app name.
+const existingUserData=app.getPath('userData');app.setName('TunnelNest');app.setPath('userData',existingUserData);
 let startupLogger;
 function startupLog(message){if(startupLogger)startupLogger.log(message);else console.error(String(message));}
 function startupError(title,error){const message=error instanceof Error?error.message:String(error);startupLog(title+': '+message);dialog.showErrorBox(title,message+(startupLogger?.filename?'\n\nStartup log: '+startupLogger.filename:''));}
-process.on('uncaughtException',error=>{startupError('Tunnel Desktop startup error',error);app.quit()});
-process.on('unhandledRejection',error=>{startupError('Tunnel Desktop error',error);app.quit()});
+process.on('uncaughtException',error=>{startupError('TunnelNest startup error',error);app.quit()});
+process.on('unhandledRejection',error=>{startupError('TunnelNest error',error);app.quit()});
 let engine,window,control,quitting=false,elevating=false;
 const key=process.platform+'-'+process.arch;
 function runtimeDir(){return app.isPackaged?path.join(process.resourcesPath,key):path.resolve(__dirname,'../dist/runtime',key)}
 function enginePath(){return path.join(runtimeDir(),process.platform==='win32'?'tunnel.exe':'tunnel')}
 function validControl(raw){const url=new URL(raw);if(url.protocol!=='http:'||url.hostname!=='127.0.0.1'||!url.port||!/^#[0-9a-f]{64}$/.test(url.hash))throw new Error('Invalid local control address');return url;}
 function requestControl(address,route,body={}){return new Promise((resolve,reject)=>{const url=new URL(route,address);const req=http.request(url,{method:'POST',headers:{'X-Tunnel-Token':address.hash.slice(1),'Content-Type':'application/json'}},res=>{let data='';res.on('data',part=>data+=part);res.on('end',()=>{try{const parsed=JSON.parse(data);if(res.statusCode>=400)reject(new Error(parsed.error||'Control request failed'));else resolve(parsed)}catch(error){reject(error)}})});req.setTimeout(25000,()=>req.destroy(new Error('Control request timed out')));req.on('error',reject);req.end(JSON.stringify(body));});}
-function openWindow(){window=new BrowserWindow({width:1320,height:960,minWidth:820,minHeight:650,title:'Tunnel Desktop',backgroundColor:'#fbf8f2',autoHideMenuBar:true,webPreferences:{nodeIntegration:false,contextIsolation:true,sandbox:true,preload:path.join(__dirname,'preload.cjs')}});window.webContents.setWindowOpenHandler(()=>({action:'deny'}));window.webContents.on('will-navigate',(event,url)=>{if(new URL(url).origin!==control.origin)event.preventDefault()});window.webContents.on('did-fail-load',(_event,code,description)=>startupLog('Window load failed '+code+': '+description));window.webContents.on('render-process-gone',(_event,details)=>startupError('Desktop renderer stopped',details.reason));return window.loadURL(control.href);}
+function openWindow(){window=new BrowserWindow({width:1320,height:960,minWidth:820,minHeight:650,title:'TunnelNest',icon:path.join(__dirname,'assets','tunnelnest.png'),backgroundColor:'#f8f6f3',autoHideMenuBar:true,webPreferences:{nodeIntegration:false,contextIsolation:true,sandbox:true,preload:path.join(__dirname,'preload.cjs')}});window.webContents.setWindowOpenHandler(()=>({action:'deny'}));window.webContents.on('will-navigate',(event,url)=>{if(new URL(url).origin!==control.origin)event.preventDefault()});window.webContents.on('did-fail-load',(_event,code,description)=>startupLog('Window load failed '+code+': '+description));window.webContents.on('render-process-gone',(_event,details)=>startupError('Desktop renderer stopped',details.reason));return window.loadURL(control.href);}
 function start(){
  startupLogger=createStartupLogger(process.platform==='win32'&&process.env.LOCALAPPDATA?path.join(process.env.LOCALAPPDATA,'TunnelDesktop','logs'):path.join(app.getPath('userData'),'logs'));
  startupLog('Starting '+app.getVersion()+' on '+process.platform+' '+process.arch+'; OS '+os.release());
