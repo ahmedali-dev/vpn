@@ -186,3 +186,50 @@ func TestPinnedSNIConfiguration(t *testing.T) {
 		}
 	}
 }
+
+func TestVMessEmptyAndCustomWebSocketHost(t *testing.T) {
+	for _, tc := range []struct{ name, raw, address, host, path string }{
+		{"empty host", `{"type":"none","path":"/vpnjantit","host":"","net":"ws","port":"8080","add":"fr2.vpnjantit.com","ps":"sda322-vpnjantit.com","tls":"tls","aid":"0","v":"2","id":"a8ca35ba-cbc4-11f1-91a9-73f996bef7a7"}`, "fr2.vpnjantit.com", "", "/vpnjantit"},
+		{"custom host", `{"add":"us-23.hihu.net","aid":"0","id":"a656b300-cb28-11f1-b030-205c6d5f5d78","host":"web.whatsapp.com","net":"ws","path":"/wovfpasr","port":"443","tls":"tls","type":"none","v":"2"}`, "us-23.hihu.net", "web.whatsapp.com", "/wovfpasr"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := parseV2RayLink("vmess://" + base64.StdEncoding.EncodeToString([]byte(tc.raw)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantSNI := tc.host
+			if wantSNI == "" {
+				wantSNI = tc.address
+			}
+			if cfg.Address != tc.address || cfg.Host != tc.host || cfg.SNI != wantSNI {
+				t.Fatalf("incorrect import: %+v", cfg)
+			}
+			generated, err := (&V2RayClient{config: cfg}).generateV2RayConfig(10808)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var doc struct {
+				Outbounds []struct {
+					StreamSettings struct {
+						TLSSettings struct{ ServerName string }
+						WSSettings  map[string]interface{}
+					}
+				}
+			}
+			if err := json.Unmarshal([]byte(generated), &doc); err != nil {
+				t.Fatal(err)
+			}
+			stream := doc.Outbounds[0].StreamSettings
+			if stream.TLSSettings.ServerName != wantSNI || stream.WSSettings["path"] != tc.path {
+				t.Fatal("incorrect TLS name or WS path")
+			}
+			headers, hasHeaders := stream.WSSettings["headers"].(map[string]interface{})
+			if tc.host == "" && hasHeaders {
+				t.Fatal("empty Host must not inject WebSocket headers")
+			}
+			if tc.host != "" && (!hasHeaders || headers["Host"] != tc.host) {
+				t.Fatal("WebSocket Host was lost")
+			}
+		})
+	}
+}

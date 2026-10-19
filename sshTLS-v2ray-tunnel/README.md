@@ -6,7 +6,7 @@ A desktop and command-line client for SSH over TLS, VMess, VLESS, Trojan, and ma
 
 Extract a desktop archive and launch **Tunnel Desktop**. Paste a VMess/VLESS/Trojan share link, choose proxy or full-device VPN, then press **Connect**. For VMess TLS over WebSocket, a missing SNI falls back to the WebSocket Host before the provider address, matching NetMod exports. Explicit SNI always takes priority. Host, path, and effective SNI are shown in the interface. Missing fingerprint and ALPN settings are left unset.
 
-Link imports preserve SNI, WebSocket host/path, gRPC service, fingerprint, ALPN, and VLESS REALITY parameters. Credentials stay in memory and are not saved to a profile database.
+Link imports preserve SNI, WebSocket host/path, gRPC service, fingerprint, ALPN, and VLESS REALITY parameters. Desktop profiles are stored locally in a per-user SQLite database with restrictive file permissions; profile arguments, including SSH passwords when saved, never leave the device.
 
 The desktop window is an Electron shell with an embedded local interface. Node integration is disabled, renderer isolation/sandboxing is enabled, external navigation is blocked, and the loopback control API requires a random session token and validates Host/Origin. The connection activity panel includes core errors and verification events.
 
@@ -105,3 +105,5 @@ Remaining validation limits: real Windows/Linux TUN behavior and native administ
 For a server that works only with certificate verification disabled, select **Certificate verification → Compatibility · accept unverified server certificate**, then reconnect. This is opt-in; Automatic verification remains the default. The CLI equivalent is `-v2ray-cert-sha256 insecure`.
 
 Compatibility mode fetches the certificate using your configured SNI without checking expiry, hostname, or CA trust, then passes its SHA-256 leaf pin to Xray. It keeps that pin in memory across core restarts until you disconnect; a new connection fetches a new pin. The initial certificate is unauthenticated and can be supplied by an impersonator. This does not establish the provider's identity or repair its expired certificate. Prefer a renewed certificate or a provider-verified manual pin. SSH verification is unchanged.
+
+SSH profiles also support the explicit `-ssh-cert-sha256 insecure` compatibility setting for servers that expose an expired, self-signed, or mismatched TLS certificate. The secure default remains automatic verification; use compatibility mode only when you accept that the initial TLS certificate is unauthenticated.

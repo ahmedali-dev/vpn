@@ -171,6 +171,11 @@ func (v *V2RayClient) generateV2RayConfig(socksPort int) (string, error) {
 	// Configure TLS/Security
 	if v.config.Security == "tls" {
 		tlsSettings := map[string]interface{}{}
+		if v.config.TLSVersion == "tls1.2" {
+			tlsSettings["minVersion"], tlsSettings["maxVersion"] = "1.2", "1.2"
+		} else if v.config.TLSVersion == "tls1.3" {
+			tlsSettings["minVersion"], tlsSettings["maxVersion"] = "1.3", "1.3"
+		}
 		if v.config.SNI != "" {
 			tlsSettings["serverName"] = v.config.SNI
 		}

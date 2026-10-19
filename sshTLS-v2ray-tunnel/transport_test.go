@@ -77,6 +77,35 @@ func TestSSHHostKeyVerification(t *testing.T) {
 	}
 }
 
+func TestSSHCompatibilityAcceptsSessionHostKey(t *testing.T) {
+	_, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := ssh.NewSignerFromKey(private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := NewVPNClient(Config{SSHUnverifiedPin: true})
+	defer client.cancel()
+	callback, err := client.sshHostKeyCallback()
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote := &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 443}
+	if err := callback("example.com", remote, signer.PublicKey()); err != nil {
+		t.Fatal(err)
+	}
+	if err := callback("example.com", remote, signer.PublicKey()); err != nil {
+		t.Fatal(err)
+	}
+	_, other, _ := ed25519.GenerateKey(rand.Reader)
+	otherSigner, _ := ssh.NewSignerFromKey(other)
+	if err := callback("example.com", remote, otherSigner.PublicKey()); err == nil {
+		t.Fatal("changed SSH host key accepted in one session")
+	}
+}
+
 func TestCONNECTPreservesBufferedTunnelData(t *testing.T) {
 	client, server := net.Pipe()
 	defer client.Close()

@@ -44,6 +44,7 @@ type controlManager struct {
 	done      chan struct{}
 	lastError string
 	logs      *logBuffer
+	profiles  *profileStore
 }
 
 func (m *controlManager) start(args []string) error {
@@ -211,6 +212,34 @@ func controlHandler(host, token string, manager *controlManager) http.Handler {
 			if err == nil {
 				result, err = parseV2RayLink(req.Link)
 			}
+		case "/api/profiles":
+			if r.Method != "GET" {
+				w.WriteHeader(405)
+				return
+			}
+			result, err = manager.profiles.list()
+		case "/api/profiles/save":
+			if r.Method != "POST" {
+				w.WriteHeader(405)
+				return
+			}
+			var req savedProfile
+			err = readJSON(w, r, &req)
+			if err == nil {
+				result, err = manager.profiles.save(req)
+			}
+		case "/api/profiles/delete":
+			if r.Method != "POST" {
+				w.WriteHeader(405)
+				return
+			}
+			var req struct {
+				ID int64 `json:"id"`
+			}
+			err = readJSON(w, r, &req)
+			if err == nil {
+				err = manager.profiles.delete(req.ID)
+			}
 		default:
 			w.WriteHeader(404)
 			return
@@ -256,6 +285,12 @@ func serveControl(ctx context.Context, port int, readyFile string) error {
 	token := hex.EncodeToString(random)
 	host := listener.Addr().String()
 	manager := &controlManager{shutdown: cancel}
+	manager.profiles, err = openProfileStore()
+	if err != nil {
+		listener.Close()
+		return err
+	}
+	defer manager.profiles.close()
 	server := &http.Server{Handler: controlHandler(host, token, manager), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second}
 	address := fmt.Sprintf("http://%s/#%s", host, token)
 	if readyFile != "" {
