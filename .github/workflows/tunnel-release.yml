@@ -136,22 +136,31 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
-          import hashlib
+          import hashlib, shutil
           folder=Path('release-assets')
           records=[]
-          manifests=list(folder.glob('SHA256SUMS-*.txt'))
+          manifests=list(folder.rglob('SHA256SUMS-*.txt'))
           assert len(manifests)==4, 'Missing platform checksum manifests'
           for manifest in manifests:
               for line in manifest.read_text().splitlines():
                   digest,name=line.split('  ',1)
-                  asset=folder/name
+                  asset=manifest.parent/name
                   assert asset.is_file(), 'Missing asset: '+name
-                  actual=hashlib.file_digest(asset.open('rb'),'sha256').hexdigest()
+                  checksum=hashlib.sha256()
+                  with asset.open('rb') as stream:
+                      for chunk in iter(lambda:stream.read(1024*1024),b''): checksum.update(chunk)
+                  actual=checksum.hexdigest()
                   assert actual==digest, 'Checksum mismatch: '+name
                   records.append(line)
+                  destination=folder/name
+                  if asset!=destination:
+                      assert not destination.exists(), 'Duplicate asset: '+name
+                      shutil.move(str(asset),str(destination))
           assert len(records)==8 and len(set(records))==8, 'Expected four desktop and four CLI archives'
           (folder/'SHA256SUMS.txt').write_text('\n'.join(sorted(records))+'\n')
           for manifest in manifests: manifest.unlink()
+          for directory in sorted((p for p in folder.rglob('*') if p.is_dir()),key=lambda p:len(p.parts),reverse=True):
+              directory.rmdir()
           PY
       - name: Publish release assets
         env:
