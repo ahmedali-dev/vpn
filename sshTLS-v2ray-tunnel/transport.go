@@ -106,6 +106,24 @@ func (v *VPNClient) sshHostKeyCallback() (ssh.HostKeyCallback, error) {
 			return nil
 		}, nil
 	}
+	if v.config.SSHUnverifiedPin {
+		// Compatibility mode uses session-scoped TOFU for the SSH host key. This
+		// lets legacy servers work without a known_hosts file while still
+		// rejecting a key change during the same handshake/session.
+		var observed string
+		return func(host string, remote net.Addr, key ssh.PublicKey) error {
+			current := ssh.FingerprintSHA256(key)
+			if observed == "" {
+				observed = current
+				v.logf("[!] SSH compatibility mode: accepting session host key %s; configure Trusted SSH fingerprint for persistent verification.\n", current)
+				return nil
+			}
+			if observed != current {
+				return fmt.Errorf("SSH host-key changed during session for %s", host)
+			}
+			return nil
+		}, nil
+	}
 	callback, err := knownhosts.New(v.config.SSHKnownHosts)
 	if err != nil {
 		return nil, fmt.Errorf("load trusted SSH keys: %w; supply -ssh-known-hosts or -ssh-host-key from your server operator", err)
@@ -115,6 +133,11 @@ func (v *VPNClient) sshHostKeyCallback() (ssh.HostKeyCallback, error) {
 
 func sshTLSConfig(cfg Config) (*tls.Config, error) {
 	result := &tls.Config{ServerName: cfg.SNIHostname, MinVersion: tls.VersionTLS12}
+	if cfg.TLSVersion == "tls1.2" {
+		result.MinVersion, result.MaxVersion = tls.VersionTLS12, tls.VersionTLS12
+	} else if cfg.TLSVersion == "tls1.3" {
+		result.MinVersion, result.MaxVersion = tls.VersionTLS13, tls.VersionTLS13
+	}
 	if cfg.TLSCA != "" {
 		pem, err := os.ReadFile(cfg.TLSCA)
 		if err != nil {
@@ -278,6 +301,18 @@ func (v *VPNClient) dialSSHTransport() (net.Conn, error) {
 		if err != nil {
 			return nil, err
 		}
+	}
+	if v.config.SSHUnverifiedPin && pin == "" {
+		dialHost := v.config.Host
+		if v.config.DialAddress != "" {
+			dialHost = v.config.DialAddress
+		}
+		pin, err = observedCertificatePin(v.ctx, net.JoinHostPort(dialHost, strconv.Itoa(v.config.Port)), v.config.SNIHostname)
+		if err != nil {
+			return nil, err
+		}
+		v.config.SSHCertPin = pin
+		v.logf("[!] SSH compatibility mode: certificate expiry, hostname, and CA trust are not verified. Session SHA-256: %s\n", pin)
 	}
 	if pin != "" {
 		// Verification is replaced by comparison to an explicitly trusted or

@@ -10,7 +10,9 @@ TARGETS = {
  'darwin-x64': ('Xray-macos-64.zip', 'sing-box-1.14.3-darwin-amd64.tar.gz'),
 }
 def get(url):
- request = urllib.request.Request(url, headers={'User-Agent': 'TunnelDesktopBuild/1.0'})
+ headers={'User-Agent': 'TunnelDesktopBuild/1.0'}
+ if url.startswith('https://api.github.com/') and os.environ.get('GH_TOKEN'): headers['Authorization']='Bearer '+os.environ['GH_TOKEN']
+ request = urllib.request.Request(url, headers=headers)
  with urllib.request.urlopen(request, timeout=120) as response: return response.read()
 def fetch(task):
  target, repo, filename, asset = task
@@ -39,14 +41,19 @@ def fetch(task):
  print('Verified',target,filename,flush=True)
  return {'target':target,'repository':repo,'version':VERSIONS[repo],'asset':filename,'sha256':actual,'url':asset['browser_download_url']}
 def main():
+ targets=TARGETS
+ target=os.environ.get('TUNNEL_PACKAGE_TARGET')
+ if target:
+  if target not in TARGETS: raise SystemExit('Unsupported target: '+target)
+  targets={target:TARGETS[target]}
  releases = {}
  for repo,version in VERSIONS.items():
   release=json.loads(get('https://api.github.com/repos/'+repo+'/releases/tags/'+version))
   releases[repo]={asset['name']:asset for asset in release['assets']}
  tasks=[]
- for target,names in TARGETS.items():
+ for target,names in targets.items():
   for repo,name in zip(VERSIONS,names): tasks.append((target,repo,name,releases[repo][name]))
  with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool: manifest=list(pool.map(fetch,tasks))
  path=ROOT/'dist/core-manifest.json';path.write_text(json.dumps(manifest,indent=2)+'\n')
- for target in TARGETS: (ROOT/'dist/runtime'/target/'core-manifest.json').write_text(json.dumps([x for x in manifest if x['target']==target],indent=2)+'\n')
+ for target in targets: (ROOT/'dist/runtime'/target/'core-manifest.json').write_text(json.dumps([x for x in manifest if x['target']==target],indent=2)+'\n')
 if __name__=='__main__':main()

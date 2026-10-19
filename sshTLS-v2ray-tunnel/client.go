@@ -76,7 +76,9 @@ type V2RayConfig struct {
 	Port             int
 	Network          string // tcp, ws, grpc, http
 	Security         string // none, tls, reality
+	TLSVersion       string // auto, tls1.2, tls1.3
 	SNI              string
+	SNISource        string // link, host, or server fallback
 	PeerCertSHA256   string
 	AutoPin          bool
 	UnverifiedPin    bool
@@ -118,14 +120,16 @@ type Config struct {
 	TLSCA         string
 	Output        io.Writer `json:"-"`
 
-	SSHCertPin string
-	SSHAutoPin bool
+	SSHCertPin       string
+	SSHAutoPin       bool
+	SSHUnverifiedPin bool
 	// SSH specific
 	Host        string
 	Port        int
 	Username    string
 	Password    string
 	SNIHostname string
+	TLSVersion  string // auto, tls1.2, tls1.3
 
 	// V2Ray/Xray specific
 	V2Ray V2RayConfig

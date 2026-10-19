@@ -38,8 +38,9 @@ func parseConfig(args []string) (Config, error) {
 	payloadStage := fs.String("payload-stage", "before-tls", "Send CONNECT/payload before-tls or after-tls")
 	knownHosts := fs.String("ssh-known-hosts", "", "SSH known_hosts path (default ~/.ssh/known_hosts)")
 	hostKey := fs.String("ssh-host-key", "", "Trusted SSH host-key fingerprint (SHA256:...)")
-	sshPin := fs.String("ssh-cert-sha256", "auto", "SSH TLS: auto verified pin for alternate SNI, none, or a trusted 64-hex pin")
+	sshPin := fs.String("ssh-cert-sha256", "auto", "SSH TLS: auto verified pin, none, insecure compatibility pin, or a trusted 64-hex pin")
 	tlsCA := fs.String("tls-ca", "", "PEM CA certificates for SSH TLS validation")
+	tlsVersion := fs.String("tls-version", "auto", "TLS version: auto, tls1.2, or tls1.3")
 	// SSH flags
 	host := fs.String("H", "", "SSH server hostname/IP")
 	port := fs.Int("P", 0, "SSH server port")
@@ -96,6 +97,10 @@ func parseConfig(args []string) (Config, error) {
 		PACPort:        *pacPort,
 		MaxConnections: *maxConns,
 	}
+	if *tlsVersion != "auto" && *tlsVersion != "tls1.2" && *tlsVersion != "tls1.3" {
+		return Config{}, fmt.Errorf("tls-version must be auto, tls1.2, or tls1.3")
+	}
+	config.TLSVersion = *tlsVersion
 
 	if config.UIPort < 0 || config.UIPort > 65535 {
 		return Config{}, fmt.Errorf("invalid UI port")
@@ -134,10 +139,11 @@ func parseConfig(args []string) (Config, error) {
 		config.Username = *username
 		config.Password = *password
 		config.SSHAutoPin = *sshPin == "auto"
-		if *sshPin != "auto" && *sshPin != "none" {
+		config.SSHUnverifiedPin = *sshPin == "insecure"
+		if *sshPin != "auto" && *sshPin != "none" && *sshPin != "insecure" {
 			pin, err := hex.DecodeString(*sshPin)
 			if err != nil || len(pin) != 32 {
-				return Config{}, fmt.Errorf("ssh-cert-sha256 requires auto, none, or 64 hex digits")
+				return Config{}, fmt.Errorf("ssh-cert-sha256 requires auto, none, insecure, or 64 hex digits")
 			}
 			config.SSHCertPin = strings.ToLower(*sshPin)
 		}
@@ -220,6 +226,7 @@ func parseConfig(args []string) (Config, error) {
 			config.V2Ray.SNI = *v2raySNI
 		}
 		config.V2Ray.UnverifiedPin = *v2rayPin == "insecure"
+		config.V2Ray.TLSVersion = *tlsVersion
 		if config.V2Ray.UnverifiedPin && *v2rayConfig != "" {
 			return Config{}, fmt.Errorf("unverified session pin requires a generated TLS config")
 		}
@@ -385,15 +392,18 @@ func parseV2RayLink(link string) (V2RayConfig, error) {
 	if cfg.Security == "reality" && (cfg.RealityPublicKey == "" || cfg.SNI == "") {
 		return cfg, fmt.Errorf("REALITY link needs SNI and public key")
 	}
+	cfg.SNISource = "link"
 	if cfg.SNI == "" {
 		// NetMod-style VMess WebSocket exports often omit sni and use host
 		// for both the HTTP Host header and TLS server name. Explicit sni wins.
 		if cfg.Protocol == "vmess" && cfg.Security == "tls" && (cfg.Network == "ws" || cfg.Network == "httpupgrade") && cfg.Host != "" {
+			cfg.SNISource = "host"
 			cfg.SNI = cfg.Host
 			if host, _, err := net.SplitHostPort(cfg.Host); err == nil {
 				cfg.SNI = host
 			}
 		} else {
+			cfg.SNISource = "server"
 			cfg.SNI = cfg.Address
 		}
 	}

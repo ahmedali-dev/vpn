@@ -11,4 +11,8 @@ def build(item):
  subprocess.run(['go','build','-trimpath','-ldflags=-s -w','-o',str(binary),'.'],cwd=ROOT,env=env,check=True)
  print('Built',name,flush=True)
 if __name__=='__main__':
+ target=os.environ.get('TUNNEL_PACKAGE_TARGET')
+ if target:
+  if target not in TARGETS: raise SystemExit('Unsupported target: '+target)
+  TARGETS={target:TARGETS[target]}
  with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:list(pool.map(build,TARGETS.items()))

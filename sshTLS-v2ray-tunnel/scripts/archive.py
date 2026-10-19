@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """Refresh packaged engine resources and archive desktop/CLI deliverables."""
-import hashlib, pathlib, shutil, subprocess, tarfile, zipfile
+import hashlib, json, os, pathlib, shutil, subprocess, tarfile, zipfile
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 TARGETS={'win32-x64':'windows-x64','linux-x64':'linux-x64','darwin-arm64':'macos-arm64','darwin-x64':'macos-x64'}
-DOWNLOADS=ROOT/'dist/downloads';DOWNLOADS.mkdir(parents=True,exist_ok=True)
+VERSION=json.loads((ROOT/'desktop/package.json').read_text())['version']
+target=os.environ.get('TUNNEL_PACKAGE_TARGET')
+if target:
+ if target not in TARGETS: raise SystemExit('Unsupported target: '+target)
+ TARGETS={target:TARGETS[target]}
+DOWNLOADS=ROOT/'dist/releases'/('v'+VERSION);DOWNLOADS.mkdir(parents=True,exist_ok=True)
 for key,label in TARGETS.items():
  folder=ROOT/'dist/desktop'/('Tunnel Desktop-'+key)
  resources=folder/'resources'
@@ -17,19 +22,19 @@ for key,label in TARGETS.items():
   shutil.copy2(runtime/binary,destination/binary)
  shutil.copy2(ROOT/'README.md',folder/'README.md')
  if key.startswith('darwin'):
-  output=DOWNLOADS/('TunnelDesktop-'+label+'.zip')
+  output=DOWNLOADS/('TunnelDesktop-'+label+'-'+VERSION+'.zip')
   subprocess.run(['ditto','-c','-k','--sequesterRsrc','--keepParent',str(folder),str(output)],check=True)
  elif key.startswith('linux'):
-  output=DOWNLOADS/('TunnelDesktop-'+label+'.tar.gz')
+  output=DOWNLOADS/('TunnelDesktop-'+label+'-'+VERSION+'.tar.gz')
   with tarfile.open(output,'w:gz') as archive:archive.add(folder,arcname=folder.name)
  else:
-  output=DOWNLOADS/('TunnelDesktop-'+label+'.zip')
+  output=DOWNLOADS/('TunnelDesktop-'+label+'-'+VERSION+'.zip')
   with zipfile.ZipFile(output,'w',zipfile.ZIP_DEFLATED,compresslevel=6) as archive:
    for path in sorted(folder.rglob('*')):
     if path.is_file():archive.write(path,path.relative_to(folder.parent))
  print(output.name,output.stat().st_size,flush=True)
  # Small CLI bundle is also available for testing the engine independently.
- cli=DOWNLOADS/('TunnelCLI-'+label+'.zip')
+ cli=DOWNLOADS/('TunnelCLI-'+label+'-'+VERSION+'.zip')
  with zipfile.ZipFile(cli,'w',zipfile.ZIP_DEFLATED) as archive:
   for path in sorted(runtime.rglob('*')):
    if path.is_file():archive.write(path,pathlib.Path('TunnelCLI-'+label)/path.relative_to(runtime))
