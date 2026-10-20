@@ -173,7 +173,7 @@ jobs:
           notes="sshTLS-v2ray-tunnel/release-notes/$RELEASE_TAG.md"
           test -f "$notes"
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release create "$RELEASE_TAG" --verify-tag --target "$RELEASE_COMMIT" --title "Tunnel Desktop $RELEASE_TAG" --notes-file "$notes" --draft
+            gh release create "$RELEASE_TAG" --verify-tag --target "$RELEASE_COMMIT" --title "TunnelNest $RELEASE_TAG" --notes-file "$notes" --draft
           fi
           gh release upload "$RELEASE_TAG" release-assets/* --clobber
-          gh release edit "$RELEASE_TAG" --draft=false --latest --title "Tunnel Desktop $RELEASE_TAG" --notes-file "$notes"
+          gh release edit "$RELEASE_TAG" --draft=false --latest --title "TunnelNest $RELEASE_TAG" --notes-file "$notes"
