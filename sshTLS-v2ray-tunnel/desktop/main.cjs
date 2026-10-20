@@ -6,6 +6,7 @@ const os=require('node:os');
 const fs=require('node:fs/promises');
 const http=require('node:http');
 const {createStartupLogger,checkBundle}=require('./startup.cjs');
+const {prepareShareFile}=require('./share-files.cjs');
 // Keep existing Electron preferences while changing the visible app name.
 const existingUserData=app.getPath('userData');app.setName('TunnelNest');app.setPath('userData',existingUserData);
 let startupLogger;
@@ -21,6 +22,7 @@ function validControl(raw){const url=new URL(raw);if(url.protocol!=='http:'||url
 function requestControl(address,route,body={}){return new Promise((resolve,reject)=>{const url=new URL(route,address);const req=http.request(url,{method:'POST',headers:{'X-Tunnel-Token':address.hash.slice(1),'Content-Type':'application/json'}},res=>{let data='';res.on('data',part=>data+=part);res.on('end',()=>{try{const parsed=JSON.parse(data);if(res.statusCode>=400)reject(new Error(parsed.error||'Control request failed'));else resolve(parsed)}catch(error){reject(error)}})});req.setTimeout(25000,()=>req.destroy(new Error('Control request timed out')));req.on('error',reject);req.end(JSON.stringify(body));});}
 function openWindow(){window=new BrowserWindow({width:1320,height:960,minWidth:820,minHeight:650,title:'TunnelNest',icon:path.join(__dirname,'assets','tunnelnest.png'),backgroundColor:'#f8f6f3',autoHideMenuBar:true,webPreferences:{nodeIntegration:false,contextIsolation:true,sandbox:true,preload:path.join(__dirname,'preload.cjs')}});window.webContents.setWindowOpenHandler(()=>({action:'deny'}));window.webContents.on('will-navigate',(event,url)=>{if(new URL(url).origin!==control.origin)event.preventDefault()});window.webContents.on('did-fail-load',(_event,code,description)=>startupLog('Window load failed '+code+': '+description));window.webContents.on('render-process-gone',(_event,details)=>startupError('Desktop renderer stopped',details.reason));return window.loadURL(control.href);}
 function start(){
+ if(process.platform==='darwin'&&app.dock)app.dock.setIcon(path.join(__dirname,'assets','tunnelnest.png'));
  startupLogger=createStartupLogger(process.platform==='win32'&&process.env.LOCALAPPDATA?path.join(process.env.LOCALAPPDATA,'TunnelDesktop','logs'):path.join(app.getPath('userData'),'logs'));
  startupLog('Starting '+app.getVersion()+' on '+process.platform+' '+process.arch+'; OS '+os.release());
  let executable;
@@ -64,6 +66,15 @@ async function elevateBackend(){
   throw new Error('Timed out waiting for the administrator helper');
  }finally{await fs.rm(temporary,{recursive:true,force:true}).catch(()=>{})}
 }
+ipcMain.handle('save-share-file',async(event,request)=>{
+ if(!window||event.sender!==window.webContents||event.senderFrame!==window.webContents.mainFrame||new URL(event.senderFrame.url).origin!==control.origin)throw new Error('Unauthorized desktop request');
+ const file=prepareShareFile(request);
+ const selected=await dialog.showSaveDialog(window,{title:request.format==='qr'?'Save profile QR code':'Save shared profile',defaultPath:path.join(app.getPath('downloads'),file.filename),filters:[{name:file.label,extensions:[file.extension]}]});
+ if(selected.canceled||!selected.filePath)return {cancelled:true};
+ await fs.writeFile(selected.filePath,file.data,{mode:0o600});
+ if(process.platform!=='win32')await fs.chmod(selected.filePath,0o600);
+ return {cancelled:false,filename:path.basename(selected.filePath)};
+});
 ipcMain.handle('connect-privileged',async(event,args)=>{
  if(!window||event.sender!==window.webContents||new URL(event.senderFrame.url).origin!==control.origin)throw new Error('Unauthorized desktop request');
  if(elevating)throw new Error('Administrator authorization is already in progress');

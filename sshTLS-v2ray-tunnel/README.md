@@ -121,3 +121,19 @@ SSH profiles also support the explicit `-ssh-cert-sha256 insecure` compatibility
 The repository-root `Tunnel Desktop Release` workflow builds each desktop package on its matching Windows, Linux, or macOS runner. Push a `v*` tag that matches `desktop/package.json` (for example, `v1.2.0`) to run tests, fetch checksum-verified cores, package desktop and CLI archives, and publish the release with a combined `SHA256SUMS.txt`. All four platform jobs must succeed before publication. A manual workflow run builds downloadable workflow artifacts without publishing a release.
 
 Release notes live in `release-notes/<tag>.md`. Each platform archive includes its engine and networking cores. Interactive GUI startup and administrator-approved full-device routing still require platform testing.
+
+## Profile sharing
+
+Choose **Share** on a saved profile, then select **QR code**, **File**, or **Compact code**. A password is optional. Leaving it blank produces the shortest code; anyone holding that code, QR image, or file can import its credentials. When a password is provided, the profile is encrypted with AES-256-GCM using a scrypt-derived key and fresh salt/nonce. Send that password separately.
+
+The version 2 format uses binary option IDs, removes nested VMess base64 before compression, and chooses raw or DEFLATE data according to which is smaller. An example SSH test profile uses 128 characters without a password, versus 183 with a password and 232 in the previous format. Real sizes vary with the settings. Fully offline codes carry the configuration itself; a six-character lookup code would require a separate hosting service.
+
+- `TN2.` is compressed, **not encrypted**, and has a CRC32 checksum for accidental corruption. It does not authenticate the sender.
+- `TN2P.` is password-protected and authenticated with AES-GCM.
+- Existing password-protected `TN1.` codes still import.
+
+QR codes can be scanned or saved as PNG images. Large profiles that exceed QR capacity must use File or Code. Profile files use the `.tnprofile` extension and contain the same compact code. Exports stay on the device; there are no third-party QR services.
+
+To import, open **Import a shared profile**, paste the code or choose **Open file / QR**, enter a password only if protected, then select **Validate & save profile**. Imports validate settings, create a new SQLite profile, add a suffix for duplicate names, and never connect automatically. Invalid, oversized, damaged, unsupported, and unsafe settings are rejected before saving. Passwords used to protect exports are never stored with profiles or included in the code.
+
+Device-specific executable paths are omitted. Profiles referencing local payload, CA, known_hosts, or custom core-config files must have those references removed before sharing because the files are not transferred.

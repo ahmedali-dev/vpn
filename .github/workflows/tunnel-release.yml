@@ -72,7 +72,7 @@ jobs:
       - name: Test engine and desktop logic
         run: |
           go test ./...
-          node --test desktop/import.test.cjs desktop/startup.test.cjs
+          node --test desktop/*.test.cjs
           node --check desktop/ui/app.js
       - name: Build native engine
         run: python scripts/build.py

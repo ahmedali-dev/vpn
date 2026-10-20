@@ -228,6 +228,44 @@ func controlHandler(host, token string, manager *controlManager) http.Handler {
 			if err == nil {
 				result, err = manager.profiles.save(req)
 			}
+		case "/api/profiles/share":
+			if r.Method != "POST" {
+				w.WriteHeader(405)
+				return
+			}
+			var req struct {
+				ID       int64  `json:"id"`
+				Password string `json:"password"`
+			}
+			err = readJSON(w, r, &req)
+			if err == nil {
+				var profile savedProfile
+				profile, err = manager.profiles.get(req.ID)
+				if err == nil {
+					var code string
+					code, err = encodeProfileShare(profile, req.Password)
+					if err == nil {
+						result = map[string]string{"code": code}
+					}
+				}
+			}
+		case "/api/profiles/import-shared":
+			if r.Method != "POST" {
+				w.WriteHeader(405)
+				return
+			}
+			var req struct {
+				Code     string `json:"code"`
+				Password string `json:"password"`
+			}
+			err = readJSON(w, r, &req)
+			if err == nil {
+				var profile savedProfile
+				profile, err = decodeProfileShare(req.Code, req.Password)
+				if err == nil {
+					result, err = manager.profiles.saveImported(profile)
+				}
+			}
 		case "/api/profiles/delete":
 			if r.Method != "POST" {
 				w.WriteHeader(405)
@@ -252,7 +290,7 @@ func controlHandler(host, token string, manager *controlManager) http.Handler {
 	})
 	assets := http.FileServer(http.FS(files))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" && r.URL.Path != "/app.js" && r.URL.Path != "/style.css" {
+		if r.URL.Path != "/" && r.URL.Path != "/app.js" && r.URL.Path != "/style.css" && r.URL.Path != "/tunnelnest-mark.png" && r.URL.Path != "/qrcode.js" && r.URL.Path != "/qr-reader.js" && r.URL.Path != "/share-qr.js" {
 			http.NotFound(w, r)
 			return
 		}

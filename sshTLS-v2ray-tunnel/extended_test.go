@@ -186,3 +186,37 @@ func TestStatusIdentifiesActiveProfileWithoutCredentials(t *testing.T) {
 		t.Fatal("status exposed profile credentials")
 	}
 }
+
+func TestControlServesTunnelNestLogo(t *testing.T) {
+	handler := controlHandler("127.0.0.1:12345", "secret", &controlManager{})
+	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:12345/tunnelnest-mark.png", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("logo status = %d", response.Code)
+	}
+	if response.Header().Get("Content-Type") != "image/png" {
+		t.Fatalf("logo content type = %s", response.Header().Get("Content-Type"))
+	}
+	if !strings.HasPrefix(response.Body.String(), "\x89PNG\r\n\x1a\n") {
+		t.Fatal("logo response is not a PNG")
+	}
+	request = httptest.NewRequest(http.MethodGet, "http://127.0.0.1:12345/desktop/assets/tunnelnest.png", nil)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusNotFound {
+		t.Fatal("non-public asset path exposed")
+	}
+}
+
+func TestControlServesLocalQRDependencies(t *testing.T) {
+	handler := controlHandler("127.0.0.1:12345", "secret", &controlManager{})
+	for _, path := range []string{"/qrcode.js", "/qr-reader.js", "/share-qr.js"} {
+		response := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:12345"+path, nil)
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusOK || !strings.Contains(response.Header().Get("Content-Type"), "javascript") {
+			t.Fatalf("QR dependency not served: %s", path)
+		}
+	}
+}
