@@ -29,6 +29,7 @@ func parseConfig(args []string) (Config, error) {
 	maxConns := fs.Int("max-conns", MaxConnections, "Max concurrent connections")
 
 	ui := fs.Bool("ui", false, "Start desktop control API/interface")
+	uiNoBrowser := fs.Bool("ui-no-browser", false, "Do not open the control interface in a browser")
 	uiReadyFile := fs.String("ui-ready-file", "", "Desktop helper readiness file")
 	uiPort := fs.Int("ui-port", 0, "Loopback control port (0 chooses a free port)")
 	tun := fs.Bool("tun", false, "Full-device TUN routing through sing-box (requires administrator)")
@@ -93,7 +94,7 @@ func parseConfig(args []string) (Config, error) {
 		Mode:        tunnelMode,
 		SOCKSPort:   *socksPort,
 		AutoRoute:   false,
-		UIReadyFile: *uiReadyFile, UI: *ui, UIPort: *uiPort, TUN: *tun || *autoRoute, TUNBinary: *tunBinary, ProxyURL: *proxyURL, PayloadFile: *payload, PayloadStage: *payloadStage, SSHKnownHosts: *knownHosts, SSHHostKey: *hostKey, TLSCA: *tlsCA,
+		UIReadyFile: *uiReadyFile, UI: *ui, UINoBrowser: *uiNoBrowser, UIPort: *uiPort, TUN: *tun || *autoRoute, TUNBinary: *tunBinary, ProxyURL: *proxyURL, PayloadFile: *payload, PayloadStage: *payloadStage, SSHKnownHosts: *knownHosts, SSHHostKey: *hostKey, TLSCA: *tlsCA,
 		PACPort:        *pacPort,
 		MaxConnections: *maxConns,
 	}

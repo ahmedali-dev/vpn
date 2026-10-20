@@ -28,7 +28,7 @@ function start(){
  let executable;
  try{executable=checkBundle(runtimeDir(),process.platform)}catch(error){startupError('Incomplete desktop package',error);app.quit();return}
  startupLog('Engine: '+executable);
- const child=spawn(executable,['-ui'],{cwd:runtimeDir(),windowsHide:true,stdio:['ignore','pipe','pipe']});engine=child;
+ const child=spawn(executable,['-ui','-ui-no-browser'],{cwd:runtimeDir(),windowsHide:true,stdio:['ignore','pipe','pipe']});engine=child;
  let buffer='',errors='';
  const timeout=setTimeout(()=>{if(!control&&engine===child){startupError('Tunnel engine did not become ready','The engine did not start within 30 seconds. '+errors);child.kill();app.quit()}},30000);
  child.stderr.on('data',data=>{errors=(errors+data).slice(-4000);startupLog('Engine stderr: '+data)});

@@ -21,7 +21,7 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	if cfg.UI {
-		if err := serveControl(ctx, cfg.UIPort, cfg.UIReadyFile); err != nil {
+		if err := serveControl(ctx, cfg.UIPort, cfg.UIReadyFile, cfg.UINoBrowser); err != nil {
 			log.Fatal(err)
 		}
 		return

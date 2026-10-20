@@ -308,7 +308,7 @@ func controlHandler(host, token string, manager *controlManager) http.Handler {
 		mux.ServeHTTP(w, r)
 	})
 }
-func serveControl(ctx context.Context, port int, readyFile string) error {
+func serveControl(ctx context.Context, port int, readyFile string, noBrowser bool) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
@@ -339,6 +339,13 @@ func serveControl(ctx context.Context, port int, readyFile string) error {
 		defer os.Remove(readyFile)
 	}
 	fmt.Printf("CONTROL_URL=%s\n", address)
+	if !noBrowser && readyFile == "" {
+		go func() {
+			if err := openControlBrowser(ctx, address); err != nil && ctx.Err() == nil {
+				fmt.Fprintln(os.Stderr, "[!] Could not open the browser automatically; open the CONTROL_URL printed above.")
+			}
+		}()
+	}
 	go func() {
 		<-ctx.Done()
 		_ = manager.stop()

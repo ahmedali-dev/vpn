@@ -108,6 +108,7 @@ type Config struct {
 	MaxConnections int
 
 	UI            bool
+	UINoBrowser   bool
 	UIPort        int
 	TUN           bool
 	TUNBinary     string

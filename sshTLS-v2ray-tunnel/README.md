@@ -104,7 +104,7 @@ python3 scripts/archive.py
 
 The core-fetch script pins Xray v26.3.27 and sing-box v1.14.3 and verifies each archive against the SHA-256 digest in the official GitHub release metadata. A core manifest and original core licenses are included. Cores are unmodified; their source releases are https://github.com/XTLS/Xray-core/tree/v26.3.27 and https://github.com/SagerNet/sing-box/tree/v1.14.3.
 
-For local development, build the engine into `dist/runtime/<platform>-<arch>/`, fetch cores, then run `npm start --prefix desktop`. `./tunnel -ui` also runs the same interface without the desktop shell and prints a local URL with a session token; keep that URL private.
+For local development, build the engine into `dist/runtime/<platform>-<arch>/`, fetch cores, then run `npm start --prefix desktop`. `./tunnel -ui` runs the same interface and automatically opens its control URL in your default browser. Use `./tunnel -ui -ui-no-browser` for headless use. The local URL includes a session token; keep it private. If browser opening fails, the server stays available at the printed `CONTROL_URL`.
 
 Remaining validation limits: real Windows/Linux TUN behavior and native administrator prompts require testing on those operating systems. A local test cannot establish reliability of a third-party VMess account/server. No signing certificates, installers with auto-update, persistent kill switch, or UDP-over-SSH relay are included.
 
