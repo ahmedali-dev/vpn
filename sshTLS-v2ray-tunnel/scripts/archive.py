@@ -2,7 +2,7 @@
 """Refresh packaged engine resources and archive desktop/CLI deliverables."""
 import hashlib, json, os, pathlib, shutil, subprocess, tarfile, zipfile
 ROOT=pathlib.Path(__file__).resolve().parents[1]
-TARGETS={'win32-x64':'windows-x64','linux-x64':'linux-x64','darwin-arm64':'macos-arm64','darwin-x64':'macos-x64'}
+TARGETS={'win32-x64':'windows-x64','linux-x64':'linux-x64','linux-arm64':'linux-arm64','darwin-arm64':'macos-arm64','darwin-x64':'macos-x64'}
 VERSION=json.loads((ROOT/'desktop/package.json').read_text())['version']
 target=os.environ.get('TUNNEL_PACKAGE_TARGET')
 if target:

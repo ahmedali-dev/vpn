@@ -5,7 +5,7 @@ const path=require('node:path');
 const os=require('node:os');
 const fs=require('node:fs/promises');
 const http=require('node:http');
-const {createStartupLogger,checkBundle}=require('./startup.cjs');
+const {createStartupLogger,checkBundle,connectionCoreArgs}=require('./startup.cjs');
 const {prepareShareFile}=require('./share-files.cjs');
 // Keep existing Electron preferences while changing the visible app name.
 const existingUserData=app.getPath('userData');app.setName('TunnelNest');app.setPath('userData',existingUserData);
@@ -82,8 +82,7 @@ ipcMain.handle('connect-privileged',async(event,args)=>{
  elevating=true;let elevated;
  try{
   elevated=await elevateBackend();
-  const safeArgs=[...args,'-tun-binary',path.join(runtimeDir(),'cores',process.platform==='win32'?'sing-box.exe':'sing-box')];
-  if(!safeArgs.includes('-mode')||safeArgs[safeArgs.indexOf('-mode')+1]!=='ssh')safeArgs.push('-v2ray-binary',path.join(runtimeDir(),'cores',process.platform==='win32'?'xray.exe':'xray'));
+  const safeArgs=connectionCoreArgs(args,runtimeDir(),process.platform);
   if(safeArgs.includes('-mode')&&safeArgs[safeArgs.indexOf('-mode')+1]==='ssh'&&!safeArgs.includes('-ssh-known-hosts'))safeArgs.push('-ssh-known-hosts',path.join(os.homedir(),'.ssh','known_hosts'));
   await requestControl(elevated,'/api/start',{args:safeArgs});
   const old=control;const oldEngine=engine;engine=undefined;control=elevated;

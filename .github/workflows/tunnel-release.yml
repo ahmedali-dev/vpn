@@ -23,6 +23,8 @@ jobs:
             target: win32-x64
           - runner: ubuntu-24.04
             target: linux-x64
+          - runner: ubuntu-24.04-arm
+            target: linux-arm64
           - runner: macos-15
             target: darwin-arm64
           - runner: macos-15-intel
@@ -140,7 +142,7 @@ jobs:
           folder=Path('release-assets')
           records=[]
           manifests=list(folder.rglob('SHA256SUMS-*.txt'))
-          assert len(manifests)==4, 'Missing platform checksum manifests'
+          assert len(manifests)==5, 'Missing platform checksum manifests'
           for manifest in manifests:
               for line in manifest.read_text().splitlines():
                   digest,name=line.split('  ',1)
@@ -156,7 +158,7 @@ jobs:
                   if asset!=destination:
                       assert not destination.exists(), 'Duplicate asset: '+name
                       shutil.move(str(asset),str(destination))
-          assert len(records)==8 and len(set(records))==8, 'Expected four desktop and four CLI archives'
+          assert len(records)==10 and len(set(records))==10, 'Expected five desktop and five CLI archives'
           (folder/'SHA256SUMS.txt').write_text('\n'.join(sorted(records))+'\n')
           for manifest in manifests: manifest.unlink()
           for directory in sorted((p for p in folder.rglob('*') if p.is_dir()),key=lambda p:len(p.parts),reverse=True):

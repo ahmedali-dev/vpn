@@ -151,6 +151,7 @@ func (v *VPNClient) startTUN(excluded []string) error {
 	if err != nil {
 		return err
 	}
+	v.logf("[*] TUN helper: %s (engine platform: %s/%s)\n", binary, runtime.GOOS, runtime.GOARCH)
 	b, err := generateTUNConfig(v.config, excluded)
 	if err != nil {
 		return err
@@ -171,6 +172,9 @@ func (v *VPNClient) startTUN(excluded []string) error {
 	// The check command validates schema without touching routes or interfaces.
 	check := exec.CommandContext(v.ctx, binary, "check", "-c", path)
 	if out, err := check.CombinedOutput(); err != nil {
+		if strings.Contains(string(out), "qemu-") || strings.Contains(string(out), "ld-linux-") {
+			return fmt.Errorf("TUN helper %q could not run on %s/%s: install a native sing-box build for this Linux machine and set -tun-binary to its absolute path; check uname -m and file on the helper. No TUN routes were enabled. Original error: %w: %s", binary, runtime.GOOS, runtime.GOARCH, err, out)
+		}
 		return fmt.Errorf("TUN config validation failed: %w: %s", err, out)
 	}
 	cmd := exec.Command(binary, "run", "-c", path)

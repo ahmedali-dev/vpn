@@ -15,4 +15,11 @@ function checkBundle(runtime,platform){
  if(!fs.existsSync(executable))throw new Error('The tunnel engine is missing: '+executable+'\n\nExtract the entire ZIP to a normal folder, then open Tunnel Desktop.exe from that folder. Keep its resources, locales and DLL files together.');
  return executable;
 }
-module.exports={createStartupLogger,checkBundle};
+function connectionCoreArgs(args,runtime,platform){
+ const result=[...args];
+ if(!result.includes('-tun-binary'))result.push('-tun-binary',path.join(runtime,'cores',platform==='win32'?'sing-box.exe':'sing-box'));
+ const mode=result[result.indexOf('-mode')+1];
+ if(mode!=='ssh'&&!result.includes('-v2ray-binary'))result.push('-v2ray-binary',path.join(runtime,'cores',platform==='win32'?'xray.exe':'xray'));
+ return result;
+}
+module.exports={createStartupLogger,checkBundle,connectionCoreArgs};

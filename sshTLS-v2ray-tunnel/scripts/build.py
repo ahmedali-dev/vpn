@@ -2,7 +2,7 @@
 """Cross-compile all engines; fetch cores separately with fetch-cores.py."""
 import concurrent.futures, os, pathlib, shutil, subprocess
 ROOT=pathlib.Path(__file__).resolve().parents[1]
-TARGETS={'win32-x64':('windows','amd64'),'linux-x64':('linux','amd64'),'darwin-arm64':('darwin','arm64'),'darwin-x64':('darwin','amd64')}
+TARGETS={'win32-x64':('windows','amd64'),'linux-x64':('linux','amd64'),'linux-arm64':('linux','arm64'),'darwin-arm64':('darwin','arm64'),'darwin-x64':('darwin','amd64')}
 def build(item):
  name,(system,arch)=item
  folder=ROOT/'dist/runtime'/name;folder.mkdir(parents=True,exist_ok=True)

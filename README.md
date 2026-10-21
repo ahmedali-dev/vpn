@@ -4,7 +4,7 @@
 
 **TunnelNest** uses the selected **Safe Flight** identity: a folded home-shaped ribbon and forward arrow in sage green and charcoal. Branding notes are in [TunnelNest.md](TunnelNest.md).
 
-A desktop and command-line client for SSH over TLS, VMess, VLESS, Trojan, and manual Shadowsocks configurations. Desktop packages target Windows x64, Linux x64, and macOS Apple Silicon/Intel, with Xray and sing-box included.
+A desktop and command-line client for SSH over TLS, VMess, VLESS, Trojan, and manual Shadowsocks configurations. Desktop packages target Windows x64, Linux x64/ARM64, and macOS Apple Silicon/Intel, with Xray and sing-box included.
 
 ## Desktop
 
@@ -118,7 +118,7 @@ SSH profiles also support the explicit `-ssh-cert-sha256 insecure` compatibility
 
 ## GitHub Actions releases
 
-The repository-root `Tunnel Desktop Release` workflow builds each desktop package on its matching Windows, Linux, or macOS runner. Push a `v*` tag that matches `desktop/package.json` (for example, `v1.2.0`) to run tests, fetch checksum-verified cores, package desktop and CLI archives, and publish the release with a combined `SHA256SUMS.txt`. All four platform jobs must succeed before publication. A manual workflow run builds downloadable workflow artifacts without publishing a release.
+The repository-root `Tunnel Desktop Release` workflow builds each desktop package on its matching Windows, Linux, or macOS runner. Push a `v*` tag that matches `desktop/package.json` (for example, `v1.2.0`) to run tests, fetch checksum-verified cores, package desktop and CLI archives, and publish the release with a combined `SHA256SUMS.txt`. All five platform jobs must succeed before publication. A manual workflow run builds downloadable workflow artifacts without publishing a release.
 
 Release notes live in `release-notes/<tag>.md`. Each platform archive includes its engine and networking cores. Interactive GUI startup and administrator-approved full-device routing still require platform testing.
 
@@ -143,3 +143,9 @@ Device-specific executable paths are omitted. Profiles referencing local payload
 `tunnel -ui` keeps its private session token in the URL fragment so refreshing also works in browsers that discard tab storage. Open the complete printed URL; do not share it. Under `sudo`, the browser is launched in the invoking user's desktop session instead of as root. A graphical desktop session is required; headless systems can use `-ui-no-browser`.
 
 Startup verifies HTTPS through the SOCKS proxy before reporting a working connection or activating full-device routes. If both check sites are unreachable, startup stops and logs the failures. In proxy mode, configure the browser/app for SOCKS5 with remote DNS or the PAC URL; starting a local proxy does not redirect all applications. Full-device VPN uses TUN and requires administrator privileges.
+
+### Linux ARM64
+
+On machines where `uname -m` reports `aarch64` or `arm64`, download `TunnelDesktop-linux-arm64` or `TunnelCLI-linux-arm64`. Use `linux-x64` only on x86-64 machines. Each ARM64 archive contains native ARM64 versions of the engine, Xray, and sing-box.
+
+The desktop administrator helper preserves explicit `-tun-binary` and `-v2ray-binary` profile paths. Leave these blank to use the bundled cores, or use an absolute path such as `/usr/bin/sing-box` for a separately installed native core. A QEMU missing-loader error means the selected executable or its runtime cannot run; it is separate from SSH authentication.
