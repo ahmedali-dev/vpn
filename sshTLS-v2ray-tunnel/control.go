@@ -157,11 +157,13 @@ func controlHandler(host, token string, manager *controlManager) http.Handler {
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Tunnel-Token")), []byte(token)) != 1 {
-			http.Error(w, "unauthorized", 401)
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
 			return
 		}
 		if origin := r.Header.Get("Origin"); origin != "" && origin != "http://"+host {
-			http.Error(w, "invalid origin", 403)
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid origin"})
 			return
 		}
 		var result interface{} = map[string]bool{"ok": true}

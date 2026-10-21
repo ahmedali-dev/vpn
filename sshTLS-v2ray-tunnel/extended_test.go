@@ -85,6 +85,12 @@ func TestControlRequiresTokenAndLocalHost(t *testing.T) {
 		if response.Code != tc.want {
 			t.Fatalf("got %d, want %d", response.Code, tc.want)
 		}
+		if tc.want == 401 || (tc.want == 403 && tc.origin != "") {
+			var body map[string]string
+			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil || body["error"] == "" {
+				t.Fatalf("API authentication error must be JSON: %s", response.Body.String())
+			}
+		}
 	}
 }
 

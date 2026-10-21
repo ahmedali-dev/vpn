@@ -1,8 +1,12 @@
 'use strict';
 const $=id=>document.getElementById(id);
-const token=location.hash.slice(1);history.replaceState(null,'',location.pathname);
+let token=location.hash.slice(1);
+const sessionKey='tunnelnest-control-token';
+// Keep the token in the fragment: some embedded browsers do not retain session storage.
+// Fragments stay local to the browser and are not sent in HTTP requests.
+try{if(token)sessionStorage.setItem(sessionKey,token);else token=sessionStorage.getItem(sessionKey)||''}catch{}
 let busy=false,lastLogs='',clearOffset=0,administrator=false,importedSni='',importTimer,currentProfileId=0,savedProfiles=[],activeProfileId=0,connectionState='disconnected',profileFilter='all',lastCardState='',vmessDirty=false;
-async function api(path,body){const response=await fetch('/api/'+path,{method:body===undefined?'GET':'POST',headers:{'X-Tunnel-Token':token,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});const data=await response.json();if(!response.ok)throw new Error(data.error||'Request failed');return data;}
+async function api(path,body){if(!token)throw new Error('Control session is missing. Open the complete CONTROL_URL printed by tunnel -ui.');const response=await fetch('/api/'+path,{method:body===undefined?'GET':'POST',headers:{'X-Tunnel-Token':token,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});if(response.status===401){token='';try{sessionStorage.removeItem(sessionKey)}catch{}throw new Error('Control session expired. Open the latest complete CONTROL_URL printed by tunnel -ui.')}let data;try{data=await response.json()}catch{throw new Error(response.ok?'Invalid response from the control server.':'Control request failed (HTTP '+response.status+').')}if(!response.ok)throw new Error(data?.error||'Control request failed (HTTP '+response.status+').');return data;}
 function setMode(){const ssh=$('mode').value==='ssh';$('ray').hidden=ssh;$('ssh').hidden=!ssh;}
 $('mode').onchange=setMode;$('pinMode').onchange=()=>{$('manualPin').hidden=$('pinMode').value!=='manual';$('insecureNotice').hidden=$('pinMode').value!=='insecure'};
 $('sshPinMode').onchange=()=>{$('sshManualPin').hidden=$('sshPinMode').value!=='manual'};

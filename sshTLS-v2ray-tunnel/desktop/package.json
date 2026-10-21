@@ -1,6 +1,6 @@
 {
   "name": "tunnel-desktop",
-  "version": "1.2.4",
+  "version": "1.2.5",
   "private": true,
   "description": "Desktop client for SSH TLS and Xray tunnels",
   "main": "main.cjs",

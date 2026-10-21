@@ -137,3 +137,9 @@ QR codes can be scanned or saved as PNG images. Large profiles that exceed QR ca
 To import, open **Import a shared profile**, paste the code or choose **Open file / QR**, enter a password only if protected, then select **Validate & save profile**. Imports validate settings, create a new SQLite profile, add a suffix for duplicate names, and never connect automatically. Invalid, oversized, damaged, unsupported, and unsafe settings are rejected before saving. Passwords used to protect exports are never stored with profiles or included in the code.
 
 Device-specific executable paths are omitted. Profiles referencing local payload, CA, known_hosts, or custom core-config files must have those references removed before sharing because the files are not transferred.
+
+### Control sessions and connection checks
+
+`tunnel -ui` keeps its private session token in the URL fragment so refreshing also works in browsers that discard tab storage. Open the complete printed URL; do not share it. Under `sudo`, the browser is launched in the invoking user's desktop session instead of as root. A graphical desktop session is required; headless systems can use `-ui-no-browser`.
+
+Startup verifies HTTPS through the SOCKS proxy before reporting a working connection or activating full-device routes. If both check sites are unreachable, startup stops and logs the failures. In proxy mode, configure the browser/app for SOCKS5 with remote DNS or the PAC URL; starting a local proxy does not redirect all applications. Full-device VPN uses TUN and requires administrator privileges.

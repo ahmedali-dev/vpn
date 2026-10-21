@@ -335,6 +335,11 @@ func (v *VPNClient) startSOCKSServer() error {
 			return err
 		}
 	}
+	v.logln("[*] Verifying HTTPS through the SOCKS proxy...")
+	if err := v.checkProxyInternet(); err != nil {
+		return fmt.Errorf("proxy internet check failed; full-device routes were not enabled: %w", err)
+	}
+	v.logln("[+] HTTPS through proxy verified.")
 	if v.config.TUN {
 		if err := v.startTUN(v.tunExcluded); err != nil {
 			return err
@@ -669,10 +674,6 @@ func (v *VPNClient) printBanner() {
 	v.logln("Press Ctrl+C to disconnect...")
 	v.logln("============================================================")
 
-	// Auto-test the connection
-	if v.config.Mode == ModeV2Ray || v.config.Mode == ModeXray {
-		go v.testV2RayConnection()
-	}
 }
 
 func formatTLSVersion(version uint16) string {
