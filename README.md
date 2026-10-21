@@ -149,3 +149,9 @@ Startup verifies HTTPS through the SOCKS proxy before reporting a working connec
 On machines where `uname -m` reports `aarch64` or `arm64`, download `TunnelDesktop-linux-arm64` or `TunnelCLI-linux-arm64`. Use `linux-x64` only on x86-64 machines. Each ARM64 archive contains native ARM64 versions of the engine, Xray, and sing-box.
 
 The desktop administrator helper preserves explicit `-tun-binary` and `-v2ray-binary` profile paths. Leave these blank to use the bundled cores, or use an absolute path such as `/usr/bin/sing-box` for a separately installed native core. A QEMU missing-loader error means the selected executable or its runtime cannot run; it is separate from SSH authentication.
+
+### Linux full-device capture
+
+Linux TUN enables sing-box `auto_redirect` with `auto_route` and `strict_route`, using nftables for traffic capture. The kernel must support the required nftables features; startup errors from sing-box are shown in the activity log. Other platforms retain their existing TUN settings.
+
+After TUN starts, a second HTTPS check uses normal system routing without environment HTTP proxies. If it fails, TUN is stopped and the connection reports an error instead of remaining active. This verifies connectivity after activation; it is not an independent leak test or a persistent kill switch. The SSH transport still supports TCP and tunneled DNS, not general UDP.

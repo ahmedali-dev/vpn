@@ -398,10 +398,18 @@ func (v *VPNClient) checkProxyInternet() error {
 	transport := &http.Transport{Proxy: http.ProxyURL(proxyURL), TLSHandshakeTimeout: 8 * time.Second}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, Timeout: 10 * time.Second}
-	return verifyProxyHTTPS(v.ctx, client, []string{"https://example.com", "https://ipinfo.io/ip"})
+	return verifyHTTPS(v.ctx, client, []string{"https://example.com", "https://ipinfo.io/ip"})
 }
 
-func verifyProxyHTTPS(ctx context.Context, client *http.Client, targets []string) error {
+func (v *VPNClient) checkSystemInternet() error {
+	// Explicitly ignore HTTP_PROXY/HTTPS_PROXY: this check must use normal OS routing.
+	transport := &http.Transport{Proxy: nil, TLSHandshakeTimeout: 8 * time.Second}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, Timeout: 10 * time.Second}
+	return verifyHTTPS(v.ctx, client, []string{"https://example.com", "https://ipinfo.io/ip"})
+}
+
+func verifyHTTPS(ctx context.Context, client *http.Client, targets []string) error {
 	var failures []error
 	for _, target := range targets {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
@@ -423,7 +431,7 @@ func verifyProxyHTTPS(ctx context.Context, client *http.Client, targets []string
 		}
 		failures = append(failures, fmt.Errorf("%s: HTTP %d, body error: %v", target, resp.StatusCode, readErr))
 	}
-	return fmt.Errorf("HTTPS through SOCKS failed: %v", failures)
+	return fmt.Errorf("HTTPS checks failed: %v", failures)
 }
 
 func (v *V2RayClient) coreLogf(format string, args ...interface{}) {

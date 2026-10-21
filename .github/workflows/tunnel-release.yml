@@ -82,6 +82,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python scripts/fetch-cores.py
+      - name: Validate generated TUN configurations
+        env:
+          TUNNEL_VERIFY_BUNDLED_CORES: '1'
+        run: go test -run '^TestBundledSingBoxAcceptsTUNConfig$' -count=1 -v
       - name: Smoke test bundled executables
         run: |
           python - <<'PY'

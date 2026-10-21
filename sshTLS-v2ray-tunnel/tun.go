@@ -82,15 +82,23 @@ func (t *tunProcess) Stop() {
 }
 
 func generateTUNConfig(cfg Config, excluded []string) ([]byte, error) {
+	return generateTUNConfigForPlatform(cfg, excluded, runtime.GOOS)
+}
+
+func generateTUNConfigForPlatform(cfg Config, excluded []string, platform string) ([]byte, error) {
 	outbound := map[string]interface{}{"type": "socks", "tag": "proxy", "server": "127.0.0.1", "server_port": cfg.SOCKSPort, "version": "5"}
 	rules := []map[string]interface{}{{"port": 53, "action": "hijack-dns"}}
 	if cfg.Mode == ModeSSH {
 		outbound["network"] = "tcp"
 		rules = append(rules, map[string]interface{}{"network": "udp", "action": "reject"})
 	}
+	inbound := map[string]interface{}{"type": "tun", "tag": "device", "address": []string{"172.30.111.1/30", "fdfe:dcba:9876::1/126"}, "mtu": 1500, "auto_route": true, "strict_route": true, "route_exclude_address": excluded}
+	if platform == "linux" {
+		inbound["auto_redirect"] = true
+	}
 	return json.MarshalIndent(map[string]interface{}{
 		"log":       map[string]interface{}{"level": "info", "timestamp": true},
-		"inbounds":  []map[string]interface{}{{"type": "tun", "tag": "device", "address": []string{"172.30.111.1/30", "fdfe:dcba:9876::1/126"}, "mtu": 1500, "auto_route": true, "strict_route": true, "route_exclude_address": excluded}},
+		"inbounds":  []map[string]interface{}{inbound},
 		"outbounds": []map[string]interface{}{outbound},
 		"dns":       map[string]interface{}{"servers": []map[string]interface{}{{"type": "tcp", "tag": "tunnel-dns", "server": "1.1.1.1", "detour": "proxy"}}, "final": "tunnel-dns", "strategy": "prefer_ipv4"},
 		"route":     map[string]interface{}{"auto_detect_interface": true, "rules": rules, "final": "proxy"},

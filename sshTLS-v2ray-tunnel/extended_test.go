@@ -95,24 +95,40 @@ func TestControlRequiresTokenAndLocalHost(t *testing.T) {
 }
 
 func TestBundledSingBoxAcceptsTUNConfig(t *testing.T) {
-	path := "dist/runtime/" + runtime.GOOS + "-" + runtime.GOARCH + "/cores/sing-box"
-	if runtime.GOOS == "darwin" && runtime.GOARCH == "amd64" {
-		path = "dist/runtime/darwin-x64/cores/sing-box"
+	platform := runtime.GOOS
+	if platform == "windows" {
+		platform = "win32"
 	}
+	arch := runtime.GOARCH
+	if arch == "amd64" {
+		arch = "x64"
+	}
+	binary := "sing-box"
+	if runtime.GOOS == "windows" {
+		binary += ".exe"
+	}
+	path := filepath.Join("dist", "runtime", platform+"-"+arch, "cores", binary)
 	if _, err := os.Stat(path); err != nil {
+		if os.Getenv("TUNNEL_VERIFY_BUNDLED_CORES") == "1" {
+			t.Fatalf("required bundled core unavailable: %v", err)
+		}
 		t.Skip("bundled sing-box unavailable")
 	}
-	b, err := generateTUNConfig(Config{Mode: ModeXray, SOCKSPort: 1082}, []string{"192.0.2.1/32"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	file := filepath.Join(t.TempDir(), "tun.json")
-	if err = os.WriteFile(file, b, 0600); err != nil {
-		t.Fatal(err)
-	}
-	out, err := exec.Command(path, "check", "-c", file).CombinedOutput()
-	if err != nil {
-		t.Fatalf("sing-box schema check: %v\n%s", err, out)
+	for _, mode := range []TunnelMode{ModeSSH, ModeXray} {
+		t.Run(string(mode), func(t *testing.T) {
+			b, err := generateTUNConfig(Config{Mode: mode, SOCKSPort: 1082}, []string{"192.0.2.1/32"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			file := filepath.Join(t.TempDir(), "tun.json")
+			if err = os.WriteFile(file, b, 0600); err != nil {
+				t.Fatal(err)
+			}
+			out, err := exec.Command(path, "check", "-c", file).CombinedOutput()
+			if err != nil {
+				t.Fatalf("sing-box schema check: %v\n%s", err, out)
+			}
+		})
 	}
 }
 

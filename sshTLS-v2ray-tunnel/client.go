@@ -344,6 +344,12 @@ func (v *VPNClient) startSOCKSServer() error {
 		if err := v.startTUN(v.tunExcluded); err != nil {
 			return err
 		}
+		v.logln("[*] Checking HTTPS using system routing after TUN activation...")
+		if err := v.checkSystemInternet(); err != nil {
+			v.tunProcess.Stop()
+			return fmt.Errorf("HTTPS failed after TUN activation; TUN stopped to restore normal routing: %w", err)
+		}
+		v.logln("[+] HTTPS using system routing works after TUN activation.")
 	}
 	v.running.Store(true)
 	v.printBanner()
@@ -628,7 +634,7 @@ func (v *VPNClient) printHeader() {
 
 func (v *VPNClient) printBanner() {
 	v.logln("\n============================================================")
-	v.logln("LOCAL PROXY STARTED — connection check pending")
+	v.logln("CONNECTION READY — HTTPS check passed")
 	v.logln("============================================================")
 	v.logf("SOCKS5 Proxy: 127.0.0.1:%d\n", v.config.SOCKSPort)
 	v.logf("Mode: %s\n", v.config.Mode)
