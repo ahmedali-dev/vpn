@@ -155,3 +155,9 @@ The desktop administrator helper preserves explicit `-tun-binary` and `-v2ray-bi
 Linux TUN enables sing-box `auto_redirect` with `auto_route` and `strict_route`, using nftables for traffic capture. The kernel must support the required nftables features; startup errors from sing-box are shown in the activity log. Other platforms retain their existing TUN settings.
 
 After TUN starts, a second HTTPS check uses normal system routing without environment HTTP proxies. If it fails, TUN is stopped and the connection reports an error instead of remaining active. This verifies connectivity after activation; it is not an independent leak test or a persistent kill switch. The SSH transport still supports TCP and tunneled DNS, not general UDP.
+
+### Security and reliability in 1.3
+
+Saved profiles now use an OS credential vault or a master password, with an option to keep credentials only for the current session. Elevation leaves the UI and profiles under your normal user and gives a leased helper only networking endpoints. SSH first-use trust is a separate opt-in from TLS compatibility.
+
+The editor preserves advanced settings, connection health is checked continuously, and reconnects must pass traffic checks before returning to healthy. Linux Actions jobs exercise actual TUN TCP/IPv6/DNS capture inside isolated namespaces. See [upgrade behavior, migration, signing setup and acceptance limits](sshTLS-v2ray-tunnel/docs/security-reliability-upgrade.md).

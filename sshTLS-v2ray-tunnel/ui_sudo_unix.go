@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"time"
 )
@@ -71,11 +72,11 @@ func runUnprivilegedUI(ctx context.Context, cfg Config) error {
 	if err != nil {
 		return err
 	}
-	args := []string{"-H", "-u", "#" + strconv.Itoa(uid), "--", exe, "-ui", "-ui-helper-address-file", ready, "-ui-port", strconv.Itoa(cfg.UIPort)}
+	program, args := userUICommand(runtime.GOOS, strconv.Itoa(uid), exe, ready, cfg.UIPort)
 	if cfg.UINoBrowser {
 		args = append(args, "-ui-no-browser")
 	}
-	cmd := exec.CommandContext(ctx, "/usr/bin/sudo", args...)
+	cmd := exec.CommandContext(ctx, program, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -83,4 +84,21 @@ func runUnprivilegedUI(ctx context.Context, cfg Config) error {
 	cancel()
 	<-done
 	return err
+}
+
+func userUICommand(platform, uid, exe, ready string, port int) (string, []string) {
+	args := []string{"-H", "-u", "#" + uid, "--"}
+	if platform == "linux" {
+		args = append(args, "/usr/bin/env", "XDG_RUNTIME_DIR=/run/user/"+uid, "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/"+uid+"/bus")
+		for _, name := range []string{"DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY"} {
+			if value := os.Getenv(name); value != "" {
+				args = append(args, name+"="+value)
+			}
+		}
+	}
+	args = append(args, exe, "-ui", "-ui-helper-address-file", ready, "-ui-port", strconv.Itoa(port))
+	if platform == "darwin" {
+		return "/bin/launchctl", append([]string{"asuser", uid, "/usr/bin/sudo"}, args...)
+	}
+	return "/usr/bin/sudo", args
 }

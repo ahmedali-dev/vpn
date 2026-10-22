@@ -71,6 +71,8 @@ jobs:
               assert os.environ['GITHUB_REF_NAME']=='v'+version, 'Tag must match desktop/package.json'
           PY
       - name: Install desktop dependencies
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
         run: npm ci --prefix desktop
       - name: Audit dependencies
         run: |
