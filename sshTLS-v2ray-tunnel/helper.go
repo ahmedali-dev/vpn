@@ -28,7 +28,7 @@ func newHelperClient(raw string) (*helperClient, error) {
 	if err != nil || u.Scheme != "http" || u.Hostname() != "127.0.0.1" || u.Port() == "" || u.Path != "/" || u.RawQuery != "" || u.User != nil || len(u.Fragment) != 64 || strings.Trim(u.Fragment, "0123456789abcdef") != "" {
 		return nil, fmt.Errorf("invalid privileged helper address")
 	}
-	return &helperClient{address: u, client: &http.Client{Timeout: 25 * time.Second}}, nil
+	return &helperClient{address: u, client: &http.Client{Timeout: 25 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
 }
 func (h *helperClient) request(ctx context.Context, path string, body interface{}) (map[string]interface{}, error) {
 	var data []byte

@@ -57,6 +57,18 @@ func TestLinuxFullDeviceCapture(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
+	type networkState struct {
+		command []string
+		before  string
+	}
+	var baseline []networkState
+	for _, command := range [][]string{{"ip", "-4", "rule", "show"}, {"ip", "-6", "rule", "show"}, {"nft", "list", "tables"}} {
+		output, err := exec.Command(command[0], command[1:]...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("capture namespace baseline: %v %s", err, output)
+		}
+		baseline = append(baseline, networkState{command, string(output)})
+	}
 	cmd := exec.CommandContext(ctx, os.Getenv("TUNNEL_TEST_CORE"), "run", "-c", file)
 	logs := &logBuffer{}
 	cmd.Stdout = logs
@@ -149,6 +161,12 @@ func TestLinuxFullDeviceCapture(t *testing.T) {
 		t.Fatal("SSH unexpectedly carried general UDP")
 	}
 	stop()
+	for _, state := range baseline {
+		output, err := exec.Command(state.command[0], state.command[1:]...).CombinedOutput()
+		if err != nil || string(output) != state.before {
+			t.Fatalf("network policy survived shutdown (%v): %v\nbefore: %s\nafter: %s", state.command, err, state.before, output)
+		}
+	}
 	if err = exec.Command("ip", "link", "show", "tun0").Run(); err == nil {
 		t.Fatal("TUN interface survived clean shutdown")
 	}

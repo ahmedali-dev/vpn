@@ -391,33 +391,22 @@ func (v *VPNClient) monitorV2Ray() {
 			v.reconnectMu.Unlock()
 			return
 		}
+		if v.v2rayClient.IsRunning() {
+			v.reconnectMu.Unlock()
+			continue
+		}
+		v.setHealth("degraded", fmt.Errorf("core exited; reconnecting"))
 		v.logf("[!] Core exited; restart attempt %d\n", failures+1)
 		err := v.v2rayClient.Start(v.config.SOCKSPort)
+		if err == nil {
+			err = v.verifyRecoveredConnection()
+		}
 		v.reconnectMu.Unlock()
 		if err != nil {
 			v.logf("[!] Restart failed: %v\n", err)
 			failures++
 		} else {
 			failures = 0
-		}
-	}
-}
-
-func (v *VPNClient) healthCheck() {
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-
-	for v.running.Load() {
-		select {
-		case <-ticker.C:
-			if !v.connPool.IsHealthy() && v.config.Mode == ModeSSH {
-				v.logln("\n[!] Connection unhealthy, reconnecting...")
-				if err := v.reconnect(); err == nil {
-					v.logln("[✓] Health check: Reconnected")
-				}
-			}
-		case <-v.ctx.Done():
-			return
 		}
 	}
 }
@@ -541,7 +530,11 @@ func (v *VPNClient) reconnect() error {
 	if !sleepContext(v.ctx, time.Second) {
 		return v.ctx.Err()
 	}
-	return v.connectSSH()
+	v.setHealth("degraded", fmt.Errorf("SSH reconnecting"))
+	if err := v.connectSSH(); err != nil {
+		return err
+	}
+	return v.verifyRecoveredConnection()
 }
 
 func (v *VPNClient) Start() error {

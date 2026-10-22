@@ -67,6 +67,9 @@ func (v *VPNClient) monitorInternet() {
 				v.v2rayClient.Stop()
 				if v.ctx.Err() == nil {
 					err = v.v2rayClient.Start(v.config.SOCKSPort)
+					if err == nil {
+						err = v.verifyRecoveredConnection()
+					}
 				}
 				v.reconnectMu.Unlock()
 			}
@@ -97,4 +100,21 @@ func boundedKeepalive(ctx context.Context, client sshRequestClient, timeout time
 		_ = client.Close()
 		return fmt.Errorf("SSH keepalive timed out")
 	}
+}
+
+// Reconnection must establish end-to-end health before clearing degraded status.
+func (v *VPNClient) verifyRecoveredConnection() error {
+	err := waitForSOCKS(v.ctx, v.config.SOCKSPort)
+	if err == nil {
+		err = v.checkProxyInternet()
+	}
+	if err == nil && v.config.TUN {
+		err = v.checkSystemInternet()
+	}
+	if err != nil {
+		v.setHealth("degraded", err)
+	} else {
+		v.setHealth("healthy", nil)
+	}
+	return err
 }

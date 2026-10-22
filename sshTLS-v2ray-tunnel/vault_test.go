@@ -97,3 +97,46 @@ func TestKeychainVaultPersistsAndDoesNotReplaceMissingKey(t *testing.T) {
 		t.Fatal("missing key silently replaced")
 	}
 }
+
+func TestLegacyProfilesMigrateOnlyAfterUnlock(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	_, err = db.Exec(`CREATE TABLE profiles(id INTEGER PRIMARY KEY,name TEXT,mode TEXT,args TEXT,updated_at TEXT,session_only INTEGER DEFAULT 0); INSERT INTO profiles VALUES(1,'Legacy','ssh','["-p","legacy-secret"]','',0)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := newProfileVault(db, path, unavailableKeys{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &profileStore{db: db, vault: v}
+	if err = store.migrateSecrets(); err != nil {
+		t.Fatal(err)
+	}
+	list, err := store.list()
+	if err != nil || len(list) != 1 || !list[0].Locked || len(list[0].Args) != 0 {
+		t.Fatalf("locked legacy profile exposed credentials: %#v %v", list, err)
+	}
+	if err = v.unlock("a long master password"); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.migrateSecrets(); err != nil {
+		t.Fatal(err)
+	}
+	var raw string
+	if err = db.QueryRow("SELECT args FROM profiles WHERE id=1").Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(raw, "vault1.") || strings.Contains(raw, "legacy-secret") {
+		t.Fatal("legacy plaintext was not migrated")
+	}
+	args, err := v.decode(raw)
+	if err != nil || len(args) != 2 || args[1] != "legacy-secret" {
+		t.Fatal("migration lost original credentials")
+	}
+}

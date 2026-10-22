@@ -12,7 +12,8 @@ if os.environ['TUNNEL_PACKAGE_TARGET'].startswith('darwin') and os.environ.get('
  cert=decode('MAC_CERT_P12_B64','signing.p12');api=decode('APPLE_API_KEY_B64','notary.p8')
  keychain=folder/'build.keychain-db';password=secrets.token_urlsafe(32)
  for args in (['create-keychain','-p',password,str(keychain)],['set-keychain-settings','-lut','21600',str(keychain)],['unlock-keychain','-p',password,str(keychain)],['import',str(cert),'-k',str(keychain),'-P',os.environ['MAC_CERT_PASSWORD'],'-T','/usr/bin/codesign'],['set-key-partition-list','-S','apple-tool:,apple:','-s','-k',password,str(keychain)],['list-keychains','-d','user','-s',str(keychain)]):
-  subprocess.run(['security',*args],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+  result=subprocess.run(['security',*args],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+  if result.returncode:raise SystemExit('Could not prepare temporary macOS signing keychain')
  export('APPLE_API_KEY_PATH',api)
  for name in ('MAC_SIGN_IDENTITY','APPLE_API_KEY_ID','APPLE_API_ISSUER'):export(name,os.environ[name])
 if os.environ['TUNNEL_PACKAGE_TARGET'].startswith('win32') and os.environ.get('WIN_CERT_PFX_B64'):

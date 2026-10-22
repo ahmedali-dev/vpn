@@ -47,7 +47,7 @@ func (m *controlManager) diagnostics() map[string]interface{} {
 	out := map[string]interface{}{"schemaVersion": 1, "generatedAt": time.Now().UTC(), "platform": runtime.GOOS + "/" + runtime.GOARCH, "goVersion": runtime.Version(), "state": status["state"], "health": sanitizedHealth(status["health"], secrets), "logs": redactDiagnostics(asDiagnosticString(status["logs"]), secrets...), "privacy": "Endpoints, URLs, home paths and known credentials are redacted. Review before sharing."}
 	if runtime.GOOS == "linux" {
 		routes := map[string]string{}
-		for name, args := range map[string][]string{"rules": {"-j", "rule", "show"}, "routes": {"-j", "route", "show", "table", "2022"}} {
+		for name, args := range map[string][]string{"interfaces": {"-j", "address", "show"}, "rules": {"-j", "rule", "show"}, "routes": {"-j", "route", "show", "table", "2022"}} {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			data, err := exec.CommandContext(ctx, "ip", args...).CombinedOutput()
 			cancel()
