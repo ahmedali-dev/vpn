@@ -52,7 +52,7 @@ const (
 // SOCKS5 reply codes
 const (
 	SOCKS5ReplySuccess        = 0x00
-	SOCKS5ReplyGeneralError   = 0x05
+	SOCKS5ReplyGeneralError   = 0x01
 	SOCKS5ReplyCmdNotSupport  = 0x07
 	SOCKS5ReplyAtypNotSupport = 0x08
 )
@@ -107,19 +107,23 @@ type Config struct {
 	PACPort        int
 	MaxConnections int
 
-	UI            bool
-	UINoBrowser   bool
-	UIPort        int
-	TUN           bool
-	TUNBinary     string
-	ProxyURL      string
-	PayloadFile   string
-	Payload       string
-	PayloadStage  string
-	SSHKnownHosts string
-	SSHHostKey    string
-	TLSCA         string
-	Output        io.Writer `json:"-"`
+	UI                  bool
+	UINoBrowser         bool
+	UIHelper            bool
+	UIHelperAddressFile string
+	UIPort              int
+	TUN                 bool
+	TUNBinary           string
+	ProxyURL            string
+	PayloadFile         string
+	Payload             string
+	PayloadStage        string
+	SSHKnownHosts       string
+	SSHHostKey          string
+	SSHTrustOnFirstUse  bool
+	SSHIPv4Only         bool
+	TLSCA               string
+	Output              io.Writer `json:"-"`
 
 	SSHCertPin       string
 	SSHAutoPin       bool
@@ -246,24 +250,28 @@ func (s *Stats) AddBytes(in, out int64) {
 
 // VPNClient manages the VPN tunnel
 type VPNClient struct {
-	tunProcess    *tunProcess
-	tunExcluded   []string
-	lifecycle     sync.Mutex
-	reconnectMu   sync.Mutex
-	stopped       bool
-	listener      net.Listener
-	workers       sync.WaitGroup
-	config        Config
-	connPool      *ConnectionPool
-	v2rayClient   *V2RayClient
-	running       atomic.Bool
-	stats         Stats
-	routeManager  *RouteManager
-	pacServer     *PACServer
-	ctx           context.Context
-	cancel        context.CancelFunc
-	connSemaphore chan struct{}
-	bufferPool    *sync.Pool
+	healthMu       sync.RWMutex
+	health         healthSnapshot
+	trustMu        sync.Mutex
+	observedSSHKey string
+	tunProcess     *tunProcess
+	tunExcluded    []string
+	lifecycle      sync.Mutex
+	reconnectMu    sync.Mutex
+	stopped        bool
+	listener       net.Listener
+	workers        sync.WaitGroup
+	config         Config
+	connPool       *ConnectionPool
+	v2rayClient    *V2RayClient
+	running        atomic.Bool
+	stats          Stats
+	routeManager   *RouteManager
+	pacServer      *PACServer
+	ctx            context.Context
+	cancel         context.CancelFunc
+	connSemaphore  chan struct{}
+	bufferPool     *sync.Pool
 }
 
 // NewVPNClient creates a new VPN client instance
@@ -352,6 +360,9 @@ func (v *VPNClient) startSOCKSServer() error {
 		v.logln("[+] HTTPS using system routing works after TUN activation.")
 	}
 	v.running.Store(true)
+	v.setHealth("healthy", nil)
+	v.workers.Add(1)
+	go v.monitorInternet()
 	v.printBanner()
 	if v.config.Mode == ModeSSH {
 		v.workers.Add(1)
@@ -381,33 +392,22 @@ func (v *VPNClient) monitorV2Ray() {
 			v.reconnectMu.Unlock()
 			return
 		}
+		if v.v2rayClient.IsRunning() {
+			v.reconnectMu.Unlock()
+			continue
+		}
+		v.setHealth("degraded", fmt.Errorf("core exited; reconnecting"))
 		v.logf("[!] Core exited; restart attempt %d\n", failures+1)
 		err := v.v2rayClient.Start(v.config.SOCKSPort)
+		if err == nil {
+			err = v.verifyRecoveredConnection()
+		}
 		v.reconnectMu.Unlock()
 		if err != nil {
 			v.logf("[!] Restart failed: %v\n", err)
 			failures++
 		} else {
 			failures = 0
-		}
-	}
-}
-
-func (v *VPNClient) healthCheck() {
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-
-	for v.running.Load() {
-		select {
-		case <-ticker.C:
-			if !v.connPool.IsHealthy() && v.config.Mode == ModeSSH {
-				v.logln("\n[!] Connection unhealthy, reconnecting...")
-				if err := v.reconnect(); err == nil {
-					v.logln("[✓] Health check: Reconnected")
-				}
-			}
-		case <-v.ctx.Done():
-			return
 		}
 	}
 }
@@ -435,7 +435,7 @@ func (v *VPNClient) keepalive() {
 					}
 				}
 			} else {
-				_, _, err := client.SendRequest("keepalive@openssh.com", true, nil)
+				err := boundedKeepalive(v.ctx, client, 10*time.Second)
 				if err != nil {
 					consecutiveFailures++
 					v.connPool.MarkUnhealthy()
@@ -531,7 +531,11 @@ func (v *VPNClient) reconnect() error {
 	if !sleepContext(v.ctx, time.Second) {
 		return v.ctx.Err()
 	}
-	return v.connectSSH()
+	v.setHealth("degraded", fmt.Errorf("SSH reconnecting"))
+	if err := v.connectSSH(); err != nil {
+		return err
+	}
+	return v.verifyRecoveredConnection()
 }
 
 func (v *VPNClient) Start() error {

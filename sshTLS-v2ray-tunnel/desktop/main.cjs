@@ -45,12 +45,12 @@ async function elevateBackend(){
  let launcher,launchError;
  const exe=enginePath();
  if(process.platform==='darwin'){
-  const command=[exe,'-ui','-ui-ready-file',ready].map(shellQuote).join(' ')+' </dev/null >/dev/null 2>&1 &';
+  const command=[exe,'-ui','-ui-helper','-ui-no-browser','-ui-ready-file',ready].map(shellQuote).join(' ')+' </dev/null >/dev/null 2>&1 &';
   launcher=spawn('/usr/bin/osascript',['-e','do shell script '+JSON.stringify(command)+' with administrator privileges'],{stdio:'ignore'});
  }else if(process.platform==='linux'){
-  launcher=spawn('pkexec',[exe,'-ui','-ui-ready-file',ready],{stdio:'ignore'});
+  launcher=spawn('pkexec',[exe,'-ui','-ui-helper','-ui-no-browser','-ui-ready-file',ready],{stdio:'ignore'});
  }else if(process.platform==='win32'){
-  const argumentLine='-ui -ui-ready-file "'+ready+'"';
+  const argumentLine='-ui -ui-helper -ui-no-browser -ui-ready-file "'+ready+'"';
   const script='Start-Process -FilePath '+psQuote(exe)+' -ArgumentList '+psQuote(argumentLine)+' -Verb RunAs -WindowStyle Hidden';
   launcher=spawn('powershell.exe',['-NoProfile','-NonInteractive','-Command',script],{windowsHide:true,stdio:'ignore'});
  }else{throw new Error('Administrator launch is unsupported on this platform')}
@@ -84,10 +84,8 @@ ipcMain.handle('connect-privileged',async(event,args)=>{
   elevated=await elevateBackend();
   const safeArgs=connectionCoreArgs(args,runtimeDir(),process.platform);
   if(safeArgs.includes('-mode')&&safeArgs[safeArgs.indexOf('-mode')+1]==='ssh'&&!safeArgs.includes('-ssh-known-hosts'))safeArgs.push('-ssh-known-hosts',path.join(os.homedir(),'.ssh','known_hosts'));
-  await requestControl(elevated,'/api/start',{args:safeArgs});
-  const old=control;const oldEngine=engine;engine=undefined;control=elevated;
-  await requestControl(old,'/api/quit').catch(()=>{});if(oldEngine)oldEngine.kill();
-  await window.loadURL(control.href);
+  await requestControl(control,'/api/helper/attach',{url:elevated.href});
+  await requestControl(control,'/api/start',{args:safeArgs});
   return {ok:true};
  }catch(error){if(elevated)await requestControl(elevated,'/api/quit').catch(()=>{});throw error}finally{elevating=false}
 });

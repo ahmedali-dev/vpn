@@ -13,6 +13,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -86,7 +88,7 @@ func TestSSHCompatibilityAcceptsSessionHostKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := NewVPNClient(Config{SSHUnverifiedPin: true})
+	client := NewVPNClient(Config{SSHTrustOnFirstUse: true})
 	defer client.cancel()
 	callback, err := client.sshHostKeyCallback()
 	if err != nil {
@@ -103,6 +105,13 @@ func TestSSHCompatibilityAcceptsSessionHostKey(t *testing.T) {
 	otherSigner, _ := ssh.NewSignerFromKey(other)
 	if err := callback("example.com", remote, otherSigner.PublicKey()); err == nil {
 		t.Fatal("changed SSH host key accepted in one session")
+	}
+	recreated, err := client.sshHostKeyCallback()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = recreated("example.com", remote, otherSigner.PublicKey()); err == nil {
+		t.Fatal("reconnection reset trust")
 	}
 }
 
@@ -167,5 +176,28 @@ func TestPayloadPlaceholdersAndProxyAuth(t *testing.T) {
 	req := <-observed
 	if req == nil || req.Header.Get("Proxy-Authorization") != "Basic dXNlcjpwYXNz" || req.Host != "example.com:443" {
 		t.Fatal("invalid custom payload/auth")
+	}
+}
+
+func TestTLSCompatibilityDoesNotTrustUnknownSSHKey(t *testing.T) {
+	known := filepath.Join(t.TempDir(), "known_hosts")
+	if err := os.WriteFile(known, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	v := &VPNClient{config: Config{SSHUnverifiedPin: true, SSHKnownHosts: known}}
+	callback, err := v.sshHostKeyCallback()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := ssh.NewSignerFromKey(private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = callback("server.example:22", &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 22}, signer.PublicKey()); err == nil {
+		t.Fatal("TLS compatibility silently accepted an unknown SSH host key")
 	}
 }

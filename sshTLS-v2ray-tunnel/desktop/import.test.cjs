@@ -13,7 +13,7 @@ test('switching VMess links and profiles clears old SNI overrides', async () => 
     return elements.get(id);
   };
   const context = vm.createContext({document:{getElementById:element,querySelectorAll:()=>[],addEventListener(){},querySelector:()=>element('connectionView')}, location:{hash:'#test',pathname:'/'},
-    history:{replaceState(){}}, TextDecoder, TextEncoder, atob, btoa, Event:class {}, setTimeout(){},clearTimeout(){},
+    TunnelNestProfileOptions:require('./ui/profile-options.js'),history:{replaceState(){}}, TextDecoder, TextEncoder, atob, btoa, Event:class {}, setTimeout(){},clearTimeout(){},
     fetch:async (_url, request) => {
       const {link} = JSON.parse(request.body);
       const data = JSON.parse(Buffer.from(link.slice(8),'base64').toString());
