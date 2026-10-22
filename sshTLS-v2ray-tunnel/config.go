@@ -29,6 +29,8 @@ func parseConfig(args []string) (Config, error) {
 	maxConns := fs.Int("max-conns", MaxConnections, "Max concurrent connections")
 
 	ui := fs.Bool("ui", false, "Start desktop control API/interface")
+	uiHelperAddress := fs.String("ui-helper-address-file", "", "Private parent-helper rendezvous file")
+	uiHelper := fs.Bool("ui-helper", false, "Restricted privileged networking helper with a parent lease")
 	uiNoBrowser := fs.Bool("ui-no-browser", false, "Do not open the control interface in a browser")
 	uiReadyFile := fs.String("ui-ready-file", "", "Desktop helper readiness file")
 	uiPort := fs.Int("ui-port", 0, "Loopback control port (0 chooses a free port)")
@@ -38,6 +40,7 @@ func parseConfig(args []string) (Config, error) {
 	payload := fs.String("payload-file", "", "Custom SSH CONNECT payload template file")
 	payloadStage := fs.String("payload-stage", "before-tls", "Send CONNECT/payload before-tls or after-tls")
 	knownHosts := fs.String("ssh-known-hosts", "", "SSH known_hosts path (default ~/.ssh/known_hosts)")
+	sshTOFU := fs.Bool("ssh-trust-on-first-use", false, "Explicitly accept the first SSH key for this connection session")
 	hostKey := fs.String("ssh-host-key", "", "Trusted SSH host-key fingerprint (SHA256:...)")
 	sshPin := fs.String("ssh-cert-sha256", "auto", "SSH TLS: auto verified pin, none, insecure compatibility pin, or a trusted 64-hex pin")
 	tlsCA := fs.String("tls-ca", "", "PEM CA certificates for SSH TLS validation")
@@ -94,7 +97,7 @@ func parseConfig(args []string) (Config, error) {
 		Mode:        tunnelMode,
 		SOCKSPort:   *socksPort,
 		AutoRoute:   false,
-		UIReadyFile: *uiReadyFile, UI: *ui, UINoBrowser: *uiNoBrowser, UIPort: *uiPort, TUN: *tun || *autoRoute, TUNBinary: *tunBinary, ProxyURL: *proxyURL, PayloadFile: *payload, PayloadStage: *payloadStage, SSHKnownHosts: *knownHosts, SSHHostKey: *hostKey, TLSCA: *tlsCA,
+		UIReadyFile: *uiReadyFile, UI: *ui, UINoBrowser: *uiNoBrowser, UIHelper: *uiHelper, UIHelperAddressFile: *uiHelperAddress, UIPort: *uiPort, TUN: *tun || *autoRoute, TUNBinary: *tunBinary, ProxyURL: *proxyURL, PayloadFile: *payload, PayloadStage: *payloadStage, SSHKnownHosts: *knownHosts, SSHHostKey: *hostKey, SSHTrustOnFirstUse: *sshTOFU, TLSCA: *tlsCA,
 		PACPort:        *pacPort,
 		MaxConnections: *maxConns,
 	}

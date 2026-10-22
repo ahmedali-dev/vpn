@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -163,20 +164,26 @@ func (v *VPNClient) readSOCKS5Address(conn net.Conn, atyp byte) (string, error) 
 }
 
 func (v *VPNClient) dialThroughSSH(addr string) (net.Conn, error) {
+	ctx, cancel := context.WithTimeout(v.ctx, ConnectionTimeout)
+	defer cancel()
 	v.connPool.dialAttempts.Add(1)
+	var lastErr error
 
 	for retry := 0; retry < 3; retry++ {
 		client := v.connPool.GetClient()
 		if client == nil {
 			if retry < 2 {
-				time.Sleep(100 * time.Millisecond)
+				if !sleepContext(ctx, 100*time.Millisecond) {
+					return nil, ctx.Err()
+				}
 				continue
 			}
 			v.connPool.dialErrors.Add(1)
 			return nil, fmt.Errorf("SSH client not available")
 		}
 
-		conn, err := client.Dial("tcp", addr)
+		conn, err := client.DialContext(ctx, "tcp", addr)
+		lastErr = err
 		if err == nil {
 			v.connPool.MarkHealthy()
 			return conn, nil
@@ -187,12 +194,14 @@ func (v *VPNClient) dialThroughSSH(addr string) (net.Conn, error) {
 		}
 
 		if retry < 2 {
-			time.Sleep(time.Duration(retry+1) * 200 * time.Millisecond)
+			if !sleepContext(ctx, time.Duration(retry+1)*200*time.Millisecond) {
+				return nil, ctx.Err()
+			}
 		}
 	}
 
 	v.connPool.dialErrors.Add(1)
-	return nil, fmt.Errorf("failed to dial through SSH tunnel")
+	return nil, fmt.Errorf("failed to dial through SSH tunnel: %w", lastErr)
 }
 
 func (v *VPNClient) sendSOCKS5Reply(conn net.Conn, replyCode byte) error {

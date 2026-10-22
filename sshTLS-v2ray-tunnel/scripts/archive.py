@@ -19,6 +19,8 @@ for key,label in TARGETS.items():
  # Packaging may have started before the final Go validation finished.
  binary='tunnel.exe' if key.startswith('win32') else 'tunnel'
  if not (destination/binary).exists() or hashlib.sha256((runtime/binary).read_bytes()).digest()!=hashlib.sha256((destination/binary).read_bytes()).digest():
+  if key.startswith('darwin') and os.environ.get('MAC_SIGN_IDENTITY'):
+   raise SystemExit('Signed app runtime differs from archive runtime; package again before archiving')
   shutil.copy2(runtime/binary,destination/binary)
  shutil.copy2(ROOT/'README.md',folder/'README.md')
  if key.startswith('darwin'):
@@ -39,6 +41,10 @@ for key,label in TARGETS.items():
   for path in sorted(runtime.rglob('*')):
    if path.is_file():archive.write(path,pathlib.Path('TunnelCLI-'+label)/path.relative_to(runtime))
   archive.write(ROOT/'README.md',pathlib.Path('TunnelCLI-'+label)/'README.md')
+# CLI archives are separate from the notarized Electron app and need their own ticket.
+if target and target.startswith('darwin') and os.environ.get('MAC_SIGN_IDENTITY'):
+ result=subprocess.run(['xcrun','notarytool','submit',str(cli),'--key',os.environ['APPLE_API_KEY_PATH'],'--key-id',os.environ['APPLE_API_KEY_ID'],'--issuer',os.environ['APPLE_API_ISSUER'],'--wait','--output-format','json'],check=True,stdout=subprocess.PIPE)
+ if json.loads(result.stdout).get('status')!='Accepted':raise SystemExit('CLI notarization was not accepted')
 lines=[]
 for path in sorted(DOWNLOADS.iterdir()):
  if path.name=='SHA256SUMS.txt' or not path.is_file():continue

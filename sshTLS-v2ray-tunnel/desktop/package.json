@@ -9,7 +9,7 @@
     "package": "node package.cjs"
   },
   "devDependencies": {
-    "@electron/packager": "18.3.6",
+    "@electron/packager": "20.3.0",
     "electron": "44.9.0",
     "jsqr": "^1.4.0",
     "qrcode-generator": "^1.4.4"

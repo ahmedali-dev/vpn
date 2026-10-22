@@ -55,7 +55,7 @@ func validateSharedProfile(p sharedProfile) (sharedProfile, error) {
 			return p, fmt.Errorf("duplicate profile option %s", flag)
 		}
 		seen[flag] = true
-		if flag == "-tun" || flag == "-auto-route" {
+		if flag == "-tun" || flag == "-auto-route" || flag == "-ssh-trust-on-first-use" {
 			continue
 		}
 		if !shareValueFlags[flag] {
@@ -92,7 +92,7 @@ func portableProfile(p savedProfile) (sharedProfile, error) {
 			return sharedProfile{}, fmt.Errorf("this profile uses local files (%s); remove file references before sharing", flag)
 		}
 		args = append(args, flag)
-		if flag != "-tun" && flag != "-auto-route" {
+		if flag != "-tun" && flag != "-auto-route" && flag != "-ssh-trust-on-first-use" {
 			if i+1 >= len(p.Args) {
 				return sharedProfile{}, fmt.Errorf("missing value for %s", flag)
 			}
@@ -209,12 +209,16 @@ func decodeLegacyProfileShare(code, password string) (savedProfile, error) {
 func (s *profileStore) get(id int64) (savedProfile, error) {
 	var p savedProfile
 	var raw string
-	err := s.db.QueryRow(`SELECT id,name,mode,args,updated_at FROM profiles WHERE id=?`, id).Scan(&p.ID, &p.Name, &p.Mode, &raw, &p.UpdatedAt)
+	err := s.db.QueryRow(`SELECT id,name,mode,args,updated_at,session_only FROM profiles WHERE id=?`, id).Scan(&p.ID, &p.Name, &p.Mode, &raw, &p.UpdatedAt, &p.SessionOnly)
 	if err != nil {
 		return p, fmt.Errorf("profile not found")
 	}
-	if err = json.Unmarshal([]byte(raw), &p.Args); err != nil {
-		return p, fmt.Errorf("invalid stored profile")
+	if p.Args, err = s.vault.decode(raw); err != nil {
+		return p, err
+	}
+	s.restoreSession(&p)
+	if p.NeedsCredentials {
+		return p, fmt.Errorf("profile credentials were not saved; enter them in the editor first")
 	}
 	return p, nil
 }
@@ -223,7 +227,7 @@ func (s *profileStore) get(id int64) (savedProfile, error) {
 // saved profile even when the sender used the same name.
 func (s *profileStore) saveImported(p savedProfile) (savedProfile, error) {
 	p.ID = 0
-	raw, err := json.Marshal(p.Args)
+	raw, err := s.vault.encode(p.Args)
 	if err != nil {
 		return p, err
 	}

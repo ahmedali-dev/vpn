@@ -25,11 +25,11 @@ func testShareStore(t *testing.T) *profileStore {
 		t.Fatal(err)
 	}
 	db.SetMaxOpenConns(1)
-	_, err = db.Exec(`CREATE TABLE profiles(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL UNIQUE,mode TEXT NOT NULL,args TEXT NOT NULL,updated_at TEXT NOT NULL)`)
+	_, err = db.Exec(`CREATE TABLE profiles(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL UNIQUE,mode TEXT NOT NULL,args TEXT NOT NULL,updated_at TEXT NOT NULL,session_only INTEGER NOT NULL DEFAULT 0)`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := &profileStore{db: db}
+	store := &profileStore{db: db, vault: testVault(t)}
 	t.Cleanup(store.close)
 	return store
 }
