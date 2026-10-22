@@ -40,6 +40,7 @@ func parseConfig(args []string) (Config, error) {
 	payload := fs.String("payload-file", "", "Custom SSH CONNECT payload template file")
 	payloadStage := fs.String("payload-stage", "before-tls", "Send CONNECT/payload before-tls or after-tls")
 	knownHosts := fs.String("ssh-known-hosts", "", "SSH known_hosts path (default ~/.ssh/known_hosts)")
+	sshIPv4Only := fs.Bool("ssh-ipv4-only", false, "SSH IPv4 compatibility: suppress IPv6 DNS answers and reject IPv6 destinations")
 	sshTOFU := fs.Bool("ssh-trust-on-first-use", false, "Explicitly accept the first SSH key for this connection session")
 	hostKey := fs.String("ssh-host-key", "", "Trusted SSH host-key fingerprint (SHA256:...)")
 	sshPin := fs.String("ssh-cert-sha256", "auto", "SSH TLS: auto verified pin, none, insecure compatibility pin, or a trusted 64-hex pin")
@@ -97,7 +98,7 @@ func parseConfig(args []string) (Config, error) {
 		Mode:        tunnelMode,
 		SOCKSPort:   *socksPort,
 		AutoRoute:   false,
-		UIReadyFile: *uiReadyFile, UI: *ui, UINoBrowser: *uiNoBrowser, UIHelper: *uiHelper, UIHelperAddressFile: *uiHelperAddress, UIPort: *uiPort, TUN: *tun || *autoRoute, TUNBinary: *tunBinary, ProxyURL: *proxyURL, PayloadFile: *payload, PayloadStage: *payloadStage, SSHKnownHosts: *knownHosts, SSHHostKey: *hostKey, SSHTrustOnFirstUse: *sshTOFU, TLSCA: *tlsCA,
+		UIReadyFile: *uiReadyFile, UI: *ui, UINoBrowser: *uiNoBrowser, UIHelper: *uiHelper, UIHelperAddressFile: *uiHelperAddress, UIPort: *uiPort, TUN: *tun || *autoRoute, TUNBinary: *tunBinary, ProxyURL: *proxyURL, PayloadFile: *payload, PayloadStage: *payloadStage, SSHKnownHosts: *knownHosts, SSHHostKey: *hostKey, SSHTrustOnFirstUse: *sshTOFU, SSHIPv4Only: *sshIPv4Only, TLSCA: *tlsCA,
 		PACPort:        *pacPort,
 		MaxConnections: *maxConns,
 	}

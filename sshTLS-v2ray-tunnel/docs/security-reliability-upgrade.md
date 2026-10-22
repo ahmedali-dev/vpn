@@ -42,3 +42,9 @@ Signing integration is implemented; actual signed/notarized artifacts cannot be 
 ## Local verification
 
 Go race tests, vet and desktop tests passed during implementation. The vulnerability scanner found no affected code paths; it also reported one advisory in a required module whose affected code is not called. The five-platform Actions build at commit `5aa8388` passed, including Linux x64 and ARM64 namespace traffic and policy cleanup tests. These checks cannot establish native desktop prompts or live operation on the user’s machine.
+
+## SSH servers without IPv6 egress
+
+A live SSH test found hostname/IPv4 HTTPS working while literal IPv6 connections were rejected. Enable **IPv4 compatibility** in that SSH profile (CLI: `-ssh-ipv4-only`) for these servers. This uses sing-box's `ipv4_only` DNS policy and rejects literal IPv6 requests inside the SSH tunnel. It retains IPv6 TUN capture and does not disable IPv6 system-wide. IPv6-only destinations are unavailable in this mode; applications with independent DNS caches or their own DoH may need a restart or their own IPv4 setting. SSH servers that support IPv6 and V2Ray profiles retain their existing behavior.
+
+SSH forwarding failures now include rate-limited underlying errors and the address family. SOCKS general failures use the general-error reply rather than incorrectly reporting every failure as connection refused.

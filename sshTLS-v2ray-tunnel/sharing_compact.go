@@ -21,7 +21,7 @@ var compactShareFlags = []string{
 	"-mode", "-H", "-P", "-u", "-p", "-S", "-socks-port", "-pac-port", "-max-conns", "-tls-version",
 	"-ssh-host-key", "-ssh-cert-sha256", "-proxy", "-payload-stage", "-v2ray-link", "-v2ray-sni", "-v2ray-cert-sha256",
 	"-v2ray-protocol", "-v2ray-uuid", "-v2ray-addr", "-v2ray-port", "-v2ray-network", "-v2ray-security", "-v2ray-path",
-	"-v2ray-host", "-v2ray-service", "-tun", "-auto-route", "-ssh-trust-on-first-use",
+	"-v2ray-host", "-v2ray-service", "-tun", "-auto-route", "-ssh-trust-on-first-use", "-ssh-ipv4-only",
 }
 
 func writeShareBytes(out *bytes.Buffer, value []byte) {
@@ -65,7 +65,7 @@ func packProfileShare(p sharedProfile) ([]byte, error) {
 			return nil, fmt.Errorf("unsupported compact option")
 		}
 		out.WriteByte(byte(index))
-		if flag == "-tun" || flag == "-auto-route" || flag == "-ssh-trust-on-first-use" {
+		if flag == "-tun" || flag == "-auto-route" || flag == "-ssh-trust-on-first-use" || flag == "-ssh-ipv4-only" {
 			continue
 		}
 		i++
@@ -111,7 +111,7 @@ func unpackProfileShare(data []byte) (sharedProfile, error) {
 		if len(p.Args) > 128 {
 			return p, fmt.Errorf("too many profile arguments")
 		}
-		if flag == "-tun" || flag == "-auto-route" || flag == "-ssh-trust-on-first-use" {
+		if flag == "-tun" || flag == "-auto-route" || flag == "-ssh-trust-on-first-use" || flag == "-ssh-ipv4-only" {
 			continue
 		}
 		kind, err := in.ReadByte()

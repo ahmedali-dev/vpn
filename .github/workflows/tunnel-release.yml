@@ -93,7 +93,7 @@ jobs:
       - name: Validate generated TUN configurations
         env:
           TUNNEL_VERIFY_BUNDLED_CORES: '1'
-        run: go test -run '^TestBundledSingBoxAcceptsTUNConfig$' -count=1 -v
+        run: go test -run '^TestBundled(SingBoxAcceptsTUNConfig|SSHIPv4DNSFiltersAAAA)$' -count=1 -v
       - name: Exercise Linux TUN capture in isolated namespaces
         if: startsWith(matrix.target, 'linux-')
         run: bash scripts/test-linux-network.sh

@@ -15,7 +15,7 @@ Two relevant examples:
 - An established SSH connection can be deadlocked by a malicious peer before x/crypto v0.56.0. The application calls the affected `ssh.NewClientConn`. [GO-2026-6355](https://pkg.go.dev/vuln/GO-2026-6355).
 - Revocation of a host certificate's signing CA is not correctly enforced by affected `knownhosts` versions before v0.52.0. This matters when certificate-authority entries and revocations are used. [GO-2026-5021](https://pkg.go.dev/vuln/GO-2026-5021).
 
-The local scanner used Go 1.27.2 and reported GO-2026-6809 in `crypto/x509`, with a fix in Go 1.27.3. This local result must not be treated as proof of the same standard-library exposure in every downloadable package: CI currently requests Go 1.25.x in `.github/workflows/tunnel-release.yml:53`. Inspect release binary build information separately.
+The local scanner used Go 1.27.2 and reported GO-2026-6809 in `crypto/x509`, with a fix in Go 1.27.3. This local result must not be treated as proof of the same standard-library exposure in every downloadable package: CI currently requests Go 1.25.x in `.github/workflows/tunnel-سسا ؤؤrelease.yml:53`. Inspect release binary build information separately.
 
 Recommended change: select a supported, patched Go toolchain; update x/crypto to at least v0.56.0 or a newer reviewed version; update related modules as needed; add a pinned vulnerability scanner to CI. Test SSH interoperability after upgrading.
 

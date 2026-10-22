@@ -55,7 +55,7 @@ func validateSharedProfile(p sharedProfile) (sharedProfile, error) {
 			return p, fmt.Errorf("duplicate profile option %s", flag)
 		}
 		seen[flag] = true
-		if flag == "-tun" || flag == "-auto-route" || flag == "-ssh-trust-on-first-use" {
+		if flag == "-tun" || flag == "-auto-route" || flag == "-ssh-trust-on-first-use" || flag == "-ssh-ipv4-only" {
 			continue
 		}
 		if !shareValueFlags[flag] {
@@ -92,7 +92,7 @@ func portableProfile(p savedProfile) (sharedProfile, error) {
 			return sharedProfile{}, fmt.Errorf("this profile uses local files (%s); remove file references before sharing", flag)
 		}
 		args = append(args, flag)
-		if flag != "-tun" && flag != "-auto-route" && flag != "-ssh-trust-on-first-use" {
+		if flag != "-tun" && flag != "-auto-route" && flag != "-ssh-trust-on-first-use" && flag != "-ssh-ipv4-only" {
 			if i+1 >= len(p.Args) {
 				return sharedProfile{}, fmt.Errorf("missing value for %s", flag)
 			}

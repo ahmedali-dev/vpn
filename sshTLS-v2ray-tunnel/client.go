@@ -52,7 +52,7 @@ const (
 // SOCKS5 reply codes
 const (
 	SOCKS5ReplySuccess        = 0x00
-	SOCKS5ReplyGeneralError   = 0x05
+	SOCKS5ReplyGeneralError   = 0x01
 	SOCKS5ReplyCmdNotSupport  = 0x07
 	SOCKS5ReplyAtypNotSupport = 0x08
 )
@@ -121,6 +121,7 @@ type Config struct {
 	SSHKnownHosts       string
 	SSHHostKey          string
 	SSHTrustOnFirstUse  bool
+	SSHIPv4Only         bool
 	TLSCA               string
 	Output              io.Writer `json:"-"`
 

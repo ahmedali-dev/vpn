@@ -6,7 +6,7 @@ func credentialsRemoved(args []string) []string {
 	out := append([]string(nil), args...)
 	for i := 0; i < len(out); i++ {
 		switch out[i] {
-		case "-tun", "-auto-route", "-ssh-trust-on-first-use":
+		case "-tun", "-auto-route", "-ssh-trust-on-first-use", "-ssh-ipv4-only":
 			continue
 		}
 		if i+1 >= len(out) {
