@@ -2,6 +2,7 @@ import hashlib
 import importlib.util
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -11,7 +12,7 @@ import zipfile
 from unittest.mock import patch
 
 import archive
-from package_linux import build_package, stage_payload
+from package_linux import build_package, stage_payload, validate_runtime_arch
 
 
 class PackagingTests(unittest.TestCase):
@@ -31,10 +32,34 @@ class PackagingTests(unittest.TestCase):
         (runtime / 'cores').mkdir(parents=True)
         suffix = '.exe' if target.startswith('win32-') else ''
         for name in ('tunnel', 'cores/xray', 'cores/sing-box'):
-            (runtime / (name + suffix)).write_bytes(b'#!/bin/sh\nexit 0\n')
+            path = runtime / (name + suffix)
+            if target.startswith('linux-') and sys.platform == 'linux':
+                shutil.copyfile('/bin/true', path)
+            else:
+                path.write_bytes(b'#!/bin/sh\nexit 0\n')
         (runtime / 'cores/LICENSE-sing-box.txt').write_text('Core license notice')
         (runtime / 'core-manifest.json').write_text('{}')
         return runtime
+
+    def test_linux_architecture_checks_all_three_executables(self):
+        for target, machine in [('linux-x64', 62), ('linux-arm64', 183)]:
+            runtime = self.runtime(target)
+            header = bytearray(64)
+            header[:6] = b'\x7fELF\x02\x01'
+            header[18:20] = machine.to_bytes(2, 'little')
+            for name in ('tunnel', 'cores/xray', 'cores/sing-box'):
+                (runtime / name).write_bytes(header)
+            validate_runtime_arch(runtime, target)
+            for name in ('tunnel', 'cores/xray', 'cores/sing-box'):
+                mismatch = header.copy()
+                mismatch[18:20] = (183 if machine == 62 else 62).to_bytes(2, 'little')
+                (runtime / name).write_bytes(mismatch)
+                with self.assertRaisesRegex(ValueError, 'rebuild for the requested architecture'):
+                    validate_runtime_arch(runtime, target)
+                (runtime / name).write_bytes(header)
+            (runtime / 'tunnel').write_bytes(b'not an ELF executable')
+            with self.assertRaisesRegex(ValueError, 'not a valid 64-bit Linux ELF'):
+                validate_runtime_arch(runtime, target)
 
     def test_installed_payload_preserves_core_discovery_and_private_program_files(self):
         stage = self.root / 'staged'

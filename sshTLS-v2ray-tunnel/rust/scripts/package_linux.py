@@ -15,6 +15,20 @@ DEPS = {
 }
 
 
+def validate_runtime_arch(runtime, target):
+    expected = {'linux-x64': 62, 'linux-arm64': 183}[target]
+    for name in ('tunnel', 'cores/xray', 'cores/sing-box'):
+        path = runtime / name
+        with path.open('rb') as stream:
+            header = stream.read(20)
+        if (len(header) < 20 or header[:5] != b'\x7fELF\x02'
+                or header[5] not in (1, 2)):
+            raise ValueError(f'{path} is not a valid 64-bit Linux ELF executable')
+        machine = int.from_bytes(header[18:20], 'little' if header[5] == 1 else 'big')
+        if machine != expected:
+            raise ValueError(f'{path} has ELF machine {machine}, but {target} requires {expected}; rebuild for the requested architecture')
+
+
 def stage_payload(root, runtime, destination):
     """Keep cores beside the executable so discovery works after installation."""
     app = destination / 'usr/lib/tunnelnest'
@@ -59,6 +73,7 @@ def checksum(path):
 def build_package(root, runtime, target, distro, version, output):
     if not target.startswith('linux-') or distro not in DEPS:
         raise ValueError('Native packages require a Linux target and distribution')
+    validate_runtime_arch(runtime, target)
     arch = {'linux-x64': 'x86_64', 'linux-arm64': 'aarch64'}[target]
     output = output.resolve()
     with tempfile.TemporaryDirectory(prefix='tunnelnest-package-') as temporary:

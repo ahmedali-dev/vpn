@@ -15,7 +15,7 @@ Usage: bash rust/scripts/release.sh [--version X.Y.Z] [--repo OWNER/REPO]
 Prompts for the version before changing files or starting any build.
 Updates Rust/Electron version metadata, commits the repository's changes,
 then pushes the branch and rust-vX.Y.Z tag. GitHub Actions tests and builds
-Ubuntu 24.04 x64/ARM64 DEB, Fedora 44 x64 RPM, Arch Linux x64 pkg.tar.zst,
+Ubuntu 24.04 x64/ARM64 DEB, Fedora 44 x64 RPM, Arch Linux x64/ARM64 pkg.tar.zst,
 and Windows x64 ZIP (plus portable Linux tarballs),
 then publishes a release. macOS is excluded from release builds.
 

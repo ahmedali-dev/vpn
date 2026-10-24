@@ -40,6 +40,12 @@ jobs:
             target: linux-x64
             runner: ubuntu-24.04
             image: archlinux:base-devel
+          - distro: arch
+            target: linux-arm64
+            runner: ubuntu-24.04-arm
+            # Arch's official image is amd64-only. This community image
+            # bootstraps Arch Linux ARM; pin the verified arm64 manifest.
+            image: menci/archlinuxarm@sha256:743b09f85839b1d6dcc62bbb3953ff08cd3fad583b8f100495cc199a80fcf1ef
     defaults:
       run:
         shell: bash
@@ -225,7 +231,7 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
           checksums=(*.sha256)
-          test "${#checksums[@]}" -eq 9
+          test "${#checksums[@]}" -eq 11
           for checksum in "${checksums[@]}"; do sha256sum --check "$checksum"; done
           cat "${checksums[@]}" > SHA256SUMS.txt
           rm -- "${checksums[@]}"
@@ -240,7 +246,7 @@ jobs:
             cat > "$notes" <<NOTES
           TunnelNest Rust $version
 
-          Native Rust desktop and CLI builds: Windows x64 ZIP, Ubuntu 24.04 x64/ARM64 DEB, Fedora 44 x64 RPM, and Arch Linux x64 pkg.tar.zst. Portable Linux tarballs are also included. Every package includes Xray and sing-box plus their licenses. Verify downloads against SHA256SUMS.txt.
+          Native Rust desktop and CLI builds: Windows x64 ZIP, Ubuntu 24.04 x64/ARM64 DEB, Fedora 44 x64 RPM, and Arch Linux x64/ARM64 pkg.tar.zst. Portable Linux tarballs are also included. Every package includes Xray and sing-box plus their licenses. Verify downloads against SHA256SUMS.txt. Match x86_64 packages to x86_64 machines and aarch64 packages to ARM64 machines.
 
           Builds are unsigned. Windows requires WebView2. Each Linux archive is built inside its named distribution and needs that distribution's GTK 3, WebKitGTK 4.1, OpenSSL, and D-Bus runtime libraries. Arch builds target the rolling release at build time. Live VPN connections, native authorization, and actual TUN routing require platform testing. Existing Go profiles can be transferred using shared profile codes/files.
           NOTES
