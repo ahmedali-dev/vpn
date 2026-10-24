@@ -1,0 +1,17 @@
+{
+  "name": "tunnel-desktop",
+  "version": "1.3.0",
+  "private": true,
+  "description": "Desktop client for SSH TLS and Xray tunnels",
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "package": "node package.cjs"
+  },
+  "devDependencies": {
+    "@electron/packager": "20.3.0",
+    "electron": "44.9.0",
+    "jsqr": "^1.4.0",
+    "qrcode-generator": "^1.4.4"
+  }
+}

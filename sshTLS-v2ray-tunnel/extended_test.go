@@ -85,28 +85,50 @@ func TestControlRequiresTokenAndLocalHost(t *testing.T) {
 		if response.Code != tc.want {
 			t.Fatalf("got %d, want %d", response.Code, tc.want)
 		}
+		if tc.want == 401 || (tc.want == 403 && tc.origin != "") {
+			var body map[string]string
+			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil || body["error"] == "" {
+				t.Fatalf("API authentication error must be JSON: %s", response.Body.String())
+			}
+		}
 	}
 }
 
 func TestBundledSingBoxAcceptsTUNConfig(t *testing.T) {
-	path := "dist/runtime/" + runtime.GOOS + "-" + runtime.GOARCH + "/cores/sing-box"
-	if runtime.GOOS == "darwin" && runtime.GOARCH == "amd64" {
-		path = "dist/runtime/darwin-x64/cores/sing-box"
+	platform := runtime.GOOS
+	if platform == "windows" {
+		platform = "win32"
 	}
+	arch := runtime.GOARCH
+	if arch == "amd64" {
+		arch = "x64"
+	}
+	binary := "sing-box"
+	if runtime.GOOS == "windows" {
+		binary += ".exe"
+	}
+	path := filepath.Join("dist", "runtime", platform+"-"+arch, "cores", binary)
 	if _, err := os.Stat(path); err != nil {
+		if os.Getenv("TUNNEL_VERIFY_BUNDLED_CORES") == "1" {
+			t.Fatalf("required bundled core unavailable: %v", err)
+		}
 		t.Skip("bundled sing-box unavailable")
 	}
-	b, err := generateTUNConfig(Config{Mode: ModeXray, SOCKSPort: 1082}, []string{"192.0.2.1/32"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	file := filepath.Join(t.TempDir(), "tun.json")
-	if err = os.WriteFile(file, b, 0600); err != nil {
-		t.Fatal(err)
-	}
-	out, err := exec.Command(path, "check", "-c", file).CombinedOutput()
-	if err != nil {
-		t.Fatalf("sing-box schema check: %v\n%s", err, out)
+	for _, mode := range []TunnelMode{ModeSSH, ModeXray} {
+		t.Run(string(mode), func(t *testing.T) {
+			b, err := generateTUNConfig(Config{Mode: mode, SOCKSPort: 1082}, []string{"192.0.2.1/32"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			file := filepath.Join(t.TempDir(), "tun.json")
+			if err = os.WriteFile(file, b, 0600); err != nil {
+				t.Fatal(err)
+			}
+			out, err := exec.Command(path, "check", "-c", file).CombinedOutput()
+			if err != nil {
+				t.Fatalf("sing-box schema check: %v\n%s", err, out)
+			}
+		})
 	}
 }
 
@@ -184,5 +206,39 @@ func TestStatusIdentifiesActiveProfileWithoutCredentials(t *testing.T) {
 	}
 	if strings.Contains(string(encoded), "never-export-this-credential") {
 		t.Fatal("status exposed profile credentials")
+	}
+}
+
+func TestControlServesTunnelNestLogo(t *testing.T) {
+	handler := controlHandler("127.0.0.1:12345", "secret", &controlManager{})
+	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:12345/tunnelnest-mark.png", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("logo status = %d", response.Code)
+	}
+	if response.Header().Get("Content-Type") != "image/png" {
+		t.Fatalf("logo content type = %s", response.Header().Get("Content-Type"))
+	}
+	if !strings.HasPrefix(response.Body.String(), "\x89PNG\r\n\x1a\n") {
+		t.Fatal("logo response is not a PNG")
+	}
+	request = httptest.NewRequest(http.MethodGet, "http://127.0.0.1:12345/desktop/assets/tunnelnest.png", nil)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusNotFound {
+		t.Fatal("non-public asset path exposed")
+	}
+}
+
+func TestControlServesLocalQRDependencies(t *testing.T) {
+	handler := controlHandler("127.0.0.1:12345", "secret", &controlManager{})
+	for _, path := range []string{"/qrcode.js", "/qr-reader.js", "/share-qr.js"} {
+		response := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:12345"+path, nil)
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusOK || !strings.Contains(response.Header().Get("Content-Type"), "javascript") {
+			t.Fatalf("QR dependency not served: %s", path)
+		}
 	}
 }

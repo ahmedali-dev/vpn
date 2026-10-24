@@ -1,0 +1,203 @@
+[
+  {
+    "code": "TN2.1EOiPwAABkdvIFNTSAAAA3NzaAEAC2V4YW1wbGUuY29tAgADNDQzAwAFYWxpY2UEAAZzZWNyZXQd",
+    "password": "",
+    "name": "Go SSH",
+    "mode": "ssh",
+    "args": [
+      "-mode",
+      "ssh",
+      "-H",
+      "example.com",
+      "-P",
+      "443",
+      "-u",
+      "alice",
+      "-p",
+      "secret",
+      "-ssh-ipv4-only"
+    ]
+  },
+  {
+    "code": "TN2P.58Upnog5QXAkFIpkQWLesA9NTJ0u0f7MHq4n8KGcTkyZ4EZT18N2zbOHp4tubLsSyxoIzmxF9RcQAG9B204i7pZOCkQDHquHF73lnm5gUve7jXkBr-vAxOgFtAuSZRM2Eg",
+    "password": "interop-password",
+    "name": "Go SSH",
+    "mode": "ssh",
+    "args": [
+      "-mode",
+      "ssh",
+      "-H",
+      "example.com",
+      "-P",
+      "443",
+      "-u",
+      "alice",
+      "-p",
+      "secret",
+      "-ssh-ipv4-only"
+    ]
+  },
+  {
+    "code": "TN1.f0pveHQgSCZLojGH0_YH_YhQaqEjpWVsTl9x_8Tqgt2YdzSLLkJLK1-P44htK2Ud--sIXzO52IMzVc5kA8LZCa37c_as4ZRd_JssWivAaBryDAG_8zRL2FRiLfnn1mciTVgGf1oRROloj7XlzdxtRZmA4rDtra6UUrxOVb5z07JyCmxJggFBKzHh0-8KZ_mjhghAY3g",
+    "password": "interop-password",
+    "name": "Go SSH",
+    "mode": "ssh",
+    "args": [
+      "-mode",
+      "ssh",
+      "-H",
+      "example.com",
+      "-P",
+      "443",
+      "-u",
+      "alice",
+      "-p",
+      "secret",
+      "-ssh-ipv4-only"
+    ]
+  },
+  {
+    "code": "TN2.ez9sqgEszLEKwlAMheEWHJx8BjnztQ52ui_g5OoemkArt01pUloR310Cbofzw1cf73p-PsSsqg77Qu9T_fqAmJEhO41zkabTEQmzLo7ctreEIaqL-WVdB0bCJI6MzZDgxSKW2L1a_B1Pzd8Kh7xHxnUzfH8DAA",
+    "password": "",
+    "name": "Go VMess",
+    "mode": "xray",
+    "args": [
+      "-mode",
+      "xray",
+      "-v2ray-link",
+      "vmess://eyJhZGQiOiJleGFtcGxlLmNvbSIsInBvcnQiOjQ0MywiaWQiOiJ0ZXN0LXV1aWQiLCJuZXQiOiJ3cyIsInRscyI6InRscyIsImhvc3QiOiJjZG4uZXhhbXBsZSIsInBhdGgiOiIvd3MifQ=="
+    ]
+  },
+  {
+    "code": "TN2P.KL2zbTY9Ir5bFy852by_pJ3dWGlRGn703Y5YXdbVvlHUID8PJIe_Mz-V-lYXMZmn4w7P_l36FseIlfKCAPHpCm7gjP_DA6xmh5aQZccl7WXPwoV9dhyw7S1qXsMmmHIK0w2JZSnpMSLaZl5iXU1Xzlz9z8WaXCmL9FQivASKca8oxvVSREymQ13uyIV7eTpjIhIF1C4WPN_DTPVF59g",
+    "password": "interop-password",
+    "name": "Go VMess",
+    "mode": "xray",
+    "args": [
+      "-mode",
+      "xray",
+      "-v2ray-link",
+      "vmess://eyJhZGQiOiJleGFtcGxlLmNvbSIsInBvcnQiOjQ0MywiaWQiOiJ0ZXN0LXV1aWQiLCJuZXQiOiJ3cyIsInRscyI6InRscyIsImhvc3QiOiJjZG4uZXhhbXBsZSIsInBhdGgiOiIvd3MifQ=="
+    ]
+  },
+  {
+    "code": "TN1.1m8Sh3kh6Ab0VvxAGxTky0SdJz7SLCUhjOm7eVJoCIbAoB6bTiFG9LSSlnEUify0nDghW1ULrU6Qac21YelUAlIcPFxEU0I6YpIoo48vW8cclLH7RfN5-arctHuaU3lOarc5Dc9bWJgtfjbqVw1h9WFKnOfe6AvAsqvFrwzOVlJ0UQMMaOL9y3cUV4nDwT-WX4IvONhrJV7aPnRyMOTdIG6GwjlbkvglLmQQPnSzV0KkYKK5EoJ5CYAgRsC3br2JGS3vuqJGObLB4nV7hALDMft7KiIoZoiCRVlH7mEAzLgUGAG9bpZ_EXA",
+    "password": "interop-password",
+    "name": "Go VMess",
+    "mode": "xray",
+    "args": [
+      "-mode",
+      "xray",
+      "-v2ray-link",
+      "vmess://eyJhZGQiOiJleGFtcGxlLmNvbSIsInBvcnQiOjQ0MywiaWQiOiJ0ZXN0LXV1aWQiLCJuZXQiOiJ3cyIsInRscyI6InRscyIsImhvc3QiOiJjZG4uZXhhbXBsZSIsInBhdGgiOiIvd3MifQ=="
+    ]
+  },
+  {
+    "code": "TN2.UGmDogEszLEKwlAMheEqDk4-g5z5Wgc73RdwcnUPTaCV26Y0Ka2I7y4Bt8P54dsd73p-PsSsqg7bTO_T_vUBMSNDNhqmInWrAxImnR25aW4JfVQX88uy9IyEURwZqyHBi0UssTu1-Fse678VDnmHjOtq-P4GAA",
+    "password": "",
+    "name": "Go VMess",
+    "mode": "xray",
+    "args": [
+      "-mode",
+      "xray",
+      "-v2ray-link",
+      "vmess://eyJhZGQiOiJleGFtcGxlLmNvbSIsInBvcnQiOjQ0MywiaWQiOiJ0ZXN0LXV1aWQiLCJuZXQiOiJ3cyIsInRscyI6InRscyIsImhvc3QiOiJjZG4uZXhhbXBsZSIsInBhdGgiOiIvd3MifQ"
+    ]
+  },
+  {
+    "code": "TN2P.C2JAMqdVExrHfMpcB3rYMOhc_ux2YoOjB76X9plAOQm6KMbypv3FCtTRm66pl75YX9PUM-tOX8acgx_Jxym7ruE-C8QV9KM4HNiQzjVi__stDaISgyr-cnvMs7d-7tUK7o8ZpDRbOgEurYTPor38nY2VzydbXTynYfuuULN2bYMg1Ql8pIkrvlTaH-pLje9F5chy6ZydFgDjDuhqTGk",
+    "password": "interop-password",
+    "name": "Go VMess",
+    "mode": "xray",
+    "args": [
+      "-mode",
+      "xray",
+      "-v2ray-link",
+      "vmess://eyJhZGQiOiJleGFtcGxlLmNvbSIsInBvcnQiOjQ0MywiaWQiOiJ0ZXN0LXV1aWQiLCJuZXQiOiJ3cyIsInRscyI6InRscyIsImhvc3QiOiJjZG4uZXhhbXBsZSIsInBhdGgiOiIvd3MifQ"
+    ]
+  },
+  {
+    "code": "TN1._nmbY4toudDwNk7r_AQ-ktfNCAWuNRVtDl_ZKKHAFm2oN8ifbLcOOOhuqgBa2nAbuayr6e1QUi-J4qEpC8ZoIgkwj4B6fA_CfCKdraKY1prnzeGSsVN6b6Y3kFgQET-SQel7O8lakAdC_2HcVuZr3Ca2b6GOFRPVCVtVSMh_qOUK1mpqYhJipVec2MOUDBGkl-zauy9vkRattI836gxRlY0pO18sem4w5DlJ6VyCjjLuD-67CPy8ktMw7ttuMc3eoThYc8XmMFZtBO7xkmE86IXxheFclw3WE2NHxi2EKdpsZxwA6uU",
+    "password": "interop-password",
+    "name": "Go VMess",
+    "mode": "xray",
+    "args": [
+      "-mode",
+      "xray",
+      "-v2ray-link",
+      "vmess://eyJhZGQiOiJleGFtcGxlLmNvbSIsInBvcnQiOjQ0MywiaWQiOiJ0ZXN0LXV1aWQiLCJuZXQiOiJ3cyIsInRscyI6InRscyIsImhvc3QiOiJjZG4uZXhhbXBsZSIsInBhdGgiOiIvd3MifQ"
+    ]
+  },
+  {
+    "code": "TN2.ez9sqgEszLEKwlAMheEWHJx8BjnztQ52ui_g5OoemkArt01pUloR310Cbofzw1cf73p-PsSsqg77Qu9T_fqAmJEhO41zkabTEQmzLo7ctreEIaqL-WVdB0bCJI6MzZDgxSKW2L1a_B1Pzd8Kh7xHxnUzfH8DAA",
+    "password": "",
+    "name": "Go VMess",
+    "mode": "xray",
+    "args": [
+      "-mode",
+      "xray",
+      "-v2ray-link",
+      "vmess://eyJhZGQiOiJleGFtcGxlLmNvbSIsInBvcnQiOjQ0MywiaWQiOiJ0ZXN0LXV1aWQiLCJuZXQiOiJ3cyIsInRscyI6InRscyIsImhvc3QiOiJjZG4uZXhhbXBsZSIsInBhdGgiOiIvd3MifQ=="
+    ]
+  },
+  {
+    "code": "TN2P.TPmwn0xu9S6rVsVRxWPhaj11y8SbBZPjir0-U2WYHzs0XFQNLeAQt502PZp0hxsdgWJ0sRyluT5bR7Y7PnQeoz1uG3kVQCxn5J15GzAk6ev59cIQ-fmJmKAiv3dya5c0Ig1I36k6u_W83cuxo-MkOy8UmJeuwGXpCavB4cEeqrTNX-u3S_PkyYvSUm5jtzL05KXH6G_-0K8N2gO2Ht4",
+    "password": "interop-password",
+    "name": "Go VMess",
+    "mode": "xray",
+    "args": [
+      "-mode",
+      "xray",
+      "-v2ray-link",
+      "vmess://eyJhZGQiOiJleGFtcGxlLmNvbSIsInBvcnQiOjQ0MywiaWQiOiJ0ZXN0LXV1aWQiLCJuZXQiOiJ3cyIsInRscyI6InRscyIsImhvc3QiOiJjZG4uZXhhbXBsZSIsInBhdGgiOiIvd3MifQ=="
+    ]
+  },
+  {
+    "code": "TN1.b4M9uL1GN4UL4eIp6L3UWiVi3CvDYPXSTJhb1MgDY3GYDSepVQNPduN3DwxKEKaPfdZRtDbvud4vvWPPvxhU7O508OeWiotXDANuP99kMoH3PRAY9U3FVWJhJ8S_JqY1A_I2yxWcmy3FzMU-Dzf51kKfv_dqN2pLQFpu6WsxSC2-ZB5U6r-pcJ-xb-ISipdHEGB3iZpKiXLdDxgizGl1o0qkwu0dDrGSrBnSvg6Lq_ZhquF0U1bt3nP5hI9sCUzByKFnZCmIcrkDukjdZvJpvEbQ1u79hznfhUB4AzPfpeOyM-RjELsqZa8",
+    "password": "interop-password",
+    "name": "Go VMess",
+    "mode": "xray",
+    "args": [
+      "-mode",
+      "xray",
+      "-v2ray-link",
+      "vmess://eyJhZGQiOiJleGFtcGxlLmNvbSIsInBvcnQiOjQ0MywiaWQiOiJ0ZXN0LXV1aWQiLCJuZXQiOiJ3cyIsInRscyI6InRscyIsImhvc3QiOiJjZG4uZXhhbXBsZSIsInBhdGgiOiIvd3MifQ=="
+    ]
+  },
+  {
+    "code": "TN2.UGmDogEszLEKwlAMheEqDk4-g5z5Wgc73RdwcnUPTaCV26Y0Ka2I7y4Bt8P54dsd73p-PsSsqg7bTO_T_vUBMSNDNhqmInWrAxImnR25aW4JfVQX88uy9IyEURwZqyHBi0UssTu1-Fse678VDnmHjOtq-P4GAA",
+    "password": "",
+    "name": "Go VMess",
+    "mode": "xray",
+    "args": [
+      "-mode",
+      "xray",
+      "-v2ray-link",
+      "vmess://eyJhZGQiOiJleGFtcGxlLmNvbSIsInBvcnQiOjQ0MywiaWQiOiJ0ZXN0LXV1aWQiLCJuZXQiOiJ3cyIsInRscyI6InRscyIsImhvc3QiOiJjZG4uZXhhbXBsZSIsInBhdGgiOiIvd3MifQ"
+    ]
+  },
+  {
+    "code": "TN2P.Rzt8ZOE28-uFlz4yqN9jq13bY_-Sco6UD_gf7fZA_0HFk8IPgjNpI9YUiATGJBUhyK7QzTSQ1-4dwxHlBD8d_V_8BgdP4tEV1itqAqUIOroOzRrmG0kdyYuijaCyxEO-WWR-w5ZpO7On4NdunJAYlKqh29pk0xoOwZHN9dDjGvkGLNps1lLPwoZ6pULhSTEY-066zL67Mh8kHRp7cfI",
+    "password": "interop-password",
+    "name": "Go VMess",
+    "mode": "xray",
+    "args": [
+      "-mode",
+      "xray",
+      "-v2ray-link",
+      "vmess://eyJhZGQiOiJleGFtcGxlLmNvbSIsInBvcnQiOjQ0MywiaWQiOiJ0ZXN0LXV1aWQiLCJuZXQiOiJ3cyIsInRscyI6InRscyIsImhvc3QiOiJjZG4uZXhhbXBsZSIsInBhdGgiOiIvd3MifQ"
+    ]
+  },
+  {
+    "code": "TN1.tIrIs7XjHB8xalt9_YNbCcm34A0hIQr_5JNPWrgAmrsuf2wRgOak3SZqFHSigP899V2gH4rlACRSDO56xYPuv6hVhPwCMO2KJzunGw2Mvn946dNWGD2I-6dIOD6_0dhIEngbzUp43y8wWz9gIGDEgrSckHQPDo1_Xq3K6meMQIi15WWyXPkSomFPyCbi_-QZqWHsfNtgOG3f0rZLO-khlh69tx7hsSD64mYNBQgF9kXut0qyik3Vk9PYC7x0WwpWnPqeKGt2teENbNHY8FrlQO1Uo71VOvRn0gY2lodbAks2Yd47k90",
+    "password": "interop-password",
+    "name": "Go VMess",
+    "mode": "xray",
+    "args": [
+      "-mode",
+      "xray",
+      "-v2ray-link",
+      "vmess://eyJhZGQiOiJleGFtcGxlLmNvbSIsInBvcnQiOjQ0MywiaWQiOiJ0ZXN0LXV1aWQiLCJuZXQiOiJ3cyIsInRscyI6InRscyIsImhvc3QiOiJjZG4uZXhhbXBsZSIsInBhdGgiOiIvd3MifQ"
+    ]
+  }
+]

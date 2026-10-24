@@ -4,7 +4,7 @@
 
 **TunnelNest** uses the selected **Safe Flight** identity: a folded home-shaped ribbon and forward arrow in sage green and charcoal. Branding notes are in [TunnelNest.md](../TunnelNest.md).
 
-A desktop and command-line client for SSH over TLS, VMess, VLESS, Trojan, and manual Shadowsocks configurations. Desktop packages target Windows x64, Linux x64, and macOS Apple Silicon/Intel, with Xray and sing-box included.
+A desktop and command-line client for SSH over TLS, VMess, VLESS, Trojan, and manual Shadowsocks configurations. Desktop packages target Windows x64, Linux x64/ARM64, and macOS Apple Silicon/Intel, with Xray and sing-box included.
 
 ## Desktop
 
@@ -104,7 +104,7 @@ python3 scripts/archive.py
 
 The core-fetch script pins Xray v26.3.27 and sing-box v1.14.3 and verifies each archive against the SHA-256 digest in the official GitHub release metadata. A core manifest and original core licenses are included. Cores are unmodified; their source releases are https://github.com/XTLS/Xray-core/tree/v26.3.27 and https://github.com/SagerNet/sing-box/tree/v1.14.3.
 
-For local development, build the engine into `dist/runtime/<platform>-<arch>/`, fetch cores, then run `npm start --prefix desktop`. `./tunnel -ui` also runs the same interface without the desktop shell and prints a local URL with a session token; keep that URL private.
+For local development, build the engine into `dist/runtime/<platform>-<arch>/`, fetch cores, then run `npm start --prefix desktop`. `./tunnel -ui` runs the same interface and automatically opens its control URL in your default browser. Use `./tunnel -ui -ui-no-browser` for headless use. The local URL includes a session token; keep it private. If browser opening fails, the server stays available at the printed `CONTROL_URL`.
 
 Remaining validation limits: real Windows/Linux TUN behavior and native administrator prompts require testing on those operating systems. A local test cannot establish reliability of a third-party VMess account/server. No signing certificates, installers with auto-update, persistent kill switch, or UDP-over-SSH relay are included.
 
@@ -118,6 +118,46 @@ SSH profiles also support the explicit `-ssh-cert-sha256 insecure` compatibility
 
 ## GitHub Actions releases
 
-The repository-root `Tunnel Desktop Release` workflow builds each desktop package on its matching Windows, Linux, or macOS runner. Push a `v*` tag that matches `desktop/package.json` (for example, `v1.2.0`) to run tests, fetch checksum-verified cores, package desktop and CLI archives, and publish the release with a combined `SHA256SUMS.txt`. All four platform jobs must succeed before publication. A manual workflow run builds downloadable workflow artifacts without publishing a release.
+The repository-root `Tunnel Desktop Release` workflow builds each desktop package on its matching Windows, Linux, or macOS runner. Push a `v*` tag that matches `desktop/package.json` (for example, `v1.2.0`) to run tests, fetch checksum-verified cores, package desktop and CLI archives, and publish the release with a combined `SHA256SUMS.txt`. All five platform jobs must succeed before publication. A manual workflow run builds downloadable workflow artifacts without publishing a release.
 
 Release notes live in `release-notes/<tag>.md`. Each platform archive includes its engine and networking cores. Interactive GUI startup and administrator-approved full-device routing still require platform testing.
+
+## Profile sharing
+
+Choose **Share** on a saved profile, then select **QR code**, **File**, or **Compact code**. A password is optional. Leaving it blank produces the shortest code; anyone holding that code, QR image, or file can import its credentials. When a password is provided, the profile is encrypted with AES-256-GCM using a scrypt-derived key and fresh salt/nonce. Send that password separately.
+
+The version 2 format uses binary option IDs, removes nested VMess base64 before compression, and chooses raw or DEFLATE data according to which is smaller. An example SSH test profile uses 128 characters without a password, versus 183 with a password and 232 in the previous format. Real sizes vary with the settings. Fully offline codes carry the configuration itself; a six-character lookup code would require a separate hosting service.
+
+- `TN2.` is compressed, **not encrypted**, and has a CRC32 checksum for accidental corruption. It does not authenticate the sender.
+- `TN2P.` is password-protected and authenticated with AES-GCM.
+- Existing password-protected `TN1.` codes still import.
+
+QR codes can be scanned or saved as PNG images. Large profiles that exceed QR capacity must use File or Code. Profile files use the `.tnprofile` extension and contain the same compact code. Exports stay on the device; there are no third-party QR services.
+
+To import, open **Import a shared profile**, paste the code or choose **Open file / QR**, enter a password only if protected, then select **Validate & save profile**. Imports validate settings, create a new SQLite profile, add a suffix for duplicate names, and never connect automatically. Invalid, oversized, damaged, unsupported, and unsafe settings are rejected before saving. Passwords used to protect exports are never stored with profiles or included in the code.
+
+Device-specific executable paths are omitted. Profiles referencing local payload, CA, known_hosts, or custom core-config files must have those references removed before sharing because the files are not transferred.
+
+### Control sessions and connection checks
+
+`tunnel -ui` keeps its private session token in the URL fragment so refreshing also works in browsers that discard tab storage. Open the complete printed URL; do not share it. Under `sudo`, the browser is launched in the invoking user's desktop session instead of as root. A graphical desktop session is required; headless systems can use `-ui-no-browser`.
+
+Startup verifies HTTPS through the SOCKS proxy before reporting a working connection or activating full-device routes. If both check sites are unreachable, startup stops and logs the failures. In proxy mode, configure the browser/app for SOCKS5 with remote DNS or the PAC URL; starting a local proxy does not redirect all applications. Full-device VPN uses TUN and requires administrator privileges.
+
+### Linux ARM64
+
+On machines where `uname -m` reports `aarch64` or `arm64`, download `TunnelDesktop-linux-arm64` or `TunnelCLI-linux-arm64`. Use `linux-x64` only on x86-64 machines. Each ARM64 archive contains native ARM64 versions of the engine, Xray, and sing-box.
+
+The desktop administrator helper preserves explicit `-tun-binary` and `-v2ray-binary` profile paths. Leave these blank to use the bundled cores, or use an absolute path such as `/usr/bin/sing-box` for a separately installed native core. A QEMU missing-loader error means the selected executable or its runtime cannot run; it is separate from SSH authentication.
+
+### Linux full-device capture
+
+Linux TUN enables sing-box `auto_redirect` with `auto_route` and `strict_route`, using nftables for traffic capture. The kernel must support the required nftables features; startup errors from sing-box are shown in the activity log. Other platforms retain their existing TUN settings.
+
+After TUN starts, a second HTTPS check uses normal system routing without environment HTTP proxies. If it fails, TUN is stopped and the connection reports an error instead of remaining active. This verifies connectivity after activation; it is not an independent leak test or a persistent kill switch. The SSH transport still supports TCP and tunneled DNS, not general UDP.
+
+### Security and reliability in 1.3
+
+Saved profiles now use an OS credential vault or a master password, with an option to keep credentials only for the current session. Elevation leaves the UI and profiles under your normal user and gives a leased helper only networking endpoints. SSH first-use trust is a separate opt-in from TLS compatibility.
+
+The editor preserves advanced settings, connection health is checked continuously, and reconnects must pass traffic checks before returning to healthy. Linux Actions jobs exercise actual TUN TCP/IPv6/DNS capture inside isolated namespaces. See [upgrade behavior, migration, signing setup and acceptance limits](docs/security-reliability-upgrade.md).

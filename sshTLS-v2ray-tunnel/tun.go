@@ -82,17 +82,29 @@ func (t *tunProcess) Stop() {
 }
 
 func generateTUNConfig(cfg Config, excluded []string) ([]byte, error) {
+	return generateTUNConfigForPlatform(cfg, excluded, runtime.GOOS)
+}
+
+func generateTUNConfigForPlatform(cfg Config, excluded []string, platform string) ([]byte, error) {
 	outbound := map[string]interface{}{"type": "socks", "tag": "proxy", "server": "127.0.0.1", "server_port": cfg.SOCKSPort, "version": "5"}
+	dnsStrategy := "prefer_ipv4"
+	if cfg.Mode == ModeSSH && cfg.SSHIPv4Only {
+		dnsStrategy = "ipv4_only"
+	}
 	rules := []map[string]interface{}{{"port": 53, "action": "hijack-dns"}}
 	if cfg.Mode == ModeSSH {
 		outbound["network"] = "tcp"
 		rules = append(rules, map[string]interface{}{"network": "udp", "action": "reject"})
 	}
+	inbound := map[string]interface{}{"type": "tun", "tag": "device", "address": []string{"172.30.111.1/30", "fdfe:dcba:9876::1/126"}, "mtu": 1500, "auto_route": true, "strict_route": true, "route_exclude_address": excluded}
+	if platform == "linux" {
+		inbound["auto_redirect"] = true
+	}
 	return json.MarshalIndent(map[string]interface{}{
 		"log":       map[string]interface{}{"level": "info", "timestamp": true},
-		"inbounds":  []map[string]interface{}{{"type": "tun", "tag": "device", "address": []string{"172.30.111.1/30", "fdfe:dcba:9876::1/126"}, "mtu": 1500, "auto_route": true, "strict_route": true, "route_exclude_address": excluded}},
+		"inbounds":  []map[string]interface{}{inbound},
 		"outbounds": []map[string]interface{}{outbound},
-		"dns":       map[string]interface{}{"servers": []map[string]interface{}{{"type": "tcp", "tag": "tunnel-dns", "server": "1.1.1.1", "detour": "proxy"}}, "final": "tunnel-dns", "strategy": "prefer_ipv4"},
+		"dns":       map[string]interface{}{"servers": []map[string]interface{}{{"type": "tcp", "tag": "tunnel-dns", "server": "1.1.1.1", "detour": "proxy"}}, "final": "tunnel-dns", "strategy": dnsStrategy},
 		"route":     map[string]interface{}{"auto_detect_interface": true, "rules": rules, "final": "proxy"},
 	}, "", "  ")
 }
@@ -151,6 +163,7 @@ func (v *VPNClient) startTUN(excluded []string) error {
 	if err != nil {
 		return err
 	}
+	v.logf("[*] TUN helper: %s (engine platform: %s/%s)\n", binary, runtime.GOOS, runtime.GOARCH)
 	b, err := generateTUNConfig(v.config, excluded)
 	if err != nil {
 		return err
@@ -171,6 +184,9 @@ func (v *VPNClient) startTUN(excluded []string) error {
 	// The check command validates schema without touching routes or interfaces.
 	check := exec.CommandContext(v.ctx, binary, "check", "-c", path)
 	if out, err := check.CombinedOutput(); err != nil {
+		if strings.Contains(string(out), "qemu-") || strings.Contains(string(out), "ld-linux-") {
+			return fmt.Errorf("TUN helper %q could not run on %s/%s: install a native sing-box build for this Linux machine and set -tun-binary to its absolute path; check uname -m and file on the helper. No TUN routes were enabled. Original error: %w: %s", binary, runtime.GOOS, runtime.GOARCH, err, out)
+		}
 		return fmt.Errorf("TUN config validation failed: %w: %s", err, out)
 	}
 	cmd := exec.Command(binary, "run", "-c", path)

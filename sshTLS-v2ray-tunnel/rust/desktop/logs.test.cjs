@@ -1,0 +1,12 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+test('Logs button is between All profiles and V2Ray and opens saved log files',async()=>{
+ const html=fs.readFileSync(__dirname+'/ui/index.html','utf8');assert.ok(html.indexOf('data-filter="all"')<html.indexOf('id="logsNav"'));assert.ok(html.indexOf('id="logsNav"')<html.indexOf('data-filter="xray"'));
+ const elements=new Map(),requests=[];
+ const element=id=>{if(!elements.has(id))elements.set(id,{value:id==='savedLogLevel'?'all':'',textContent:'',checked:false,hidden:false,open:false,options:[],addEventListener(){},reset(){},dispatchEvent(){},classList:{add(){},remove(){},toggle(){}},showModal(){this.open=true},close(){this.open=false},replaceChildren(){this.options=[];this.value=''},append(option){this.options.push(option);if(!this.value)this.value=option.value}});return elements.get(id)};
+ const context=vm.createContext({document:{getElementById:element,querySelectorAll:()=>[],addEventListener(){},querySelector:()=>element('connectionView'),createElement:()=>({value:'',textContent:''})},location:{hash:'#test',pathname:'/'},TunnelNestProfileOptions:require('./ui/profile-options.js'),history:{replaceState(){}},TextDecoder,TextEncoder,atob,btoa,setTimeout(){},clearTimeout(){},fetch:async(url,request)=>{requests.push(url);return{ok:true,json:async()=>url==='/api/logs'?{directory:'/local/logs',files:[{name:'tunnelnest-test.log',size:1024}]}:{name:'tunnelnest-test.log',text:'2026 [INFO] [SSH] Authenticated\n2026 [ERROR] [TLS] Certificate rejected\n'}}}});
+ const source=fs.readFileSync(__dirname+'/ui/app.js','utf8');vm.runInContext(source.slice(0,source.lastIndexOf('setMode();loadProfiles();poll();')),context);
+ await vm.runInContext('refreshSavedLogs()',context);assert.equal(element('logDirectory').value,'/local/logs');assert.match(element('savedLogsText').textContent,/Authenticated/);assert.equal(element('downloadSavedLog').disabled,false);
+ element('savedLogLevel').value='ERROR';vm.runInContext('renderSavedLog()',context);assert.match(element('savedLogsText').textContent,/Certificate rejected/);assert.doesNotMatch(element('savedLogsText').textContent,/Authenticated/);
+ element('logsNav').onclick();assert.equal(element('logsDialog').open,true);element('closeSavedLogs').onclick();assert.equal(element('logsDialog').open,false);assert.ok(requests.includes('/api/logs/read'));
+});

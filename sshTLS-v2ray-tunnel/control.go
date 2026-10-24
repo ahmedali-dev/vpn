@@ -15,6 +15,7 @@ import (
 	"os"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -38,13 +39,17 @@ func (b *logBuffer) Write(p []byte) (int, error) {
 func (b *logBuffer) String() string { b.mu.Lock(); defer b.mu.Unlock(); return b.data }
 
 type controlManager struct {
-	shutdown  context.CancelFunc
-	mu        sync.Mutex
-	client    *VPNClient
-	done      chan struct{}
-	lastError string
-	logs      *logBuffer
-	profiles  *profileStore
+	helperMu   sync.Mutex
+	helper     *helperClient
+	helperOnly bool
+	lastLease  atomic.Int64
+	shutdown   context.CancelFunc
+	mu         sync.Mutex
+	client     *VPNClient
+	done       chan struct{}
+	lastError  string
+	logs       *logBuffer
+	profiles   *profileStore
 }
 
 func (m *controlManager) start(args []string) error {
@@ -52,12 +57,20 @@ func (m *controlManager) start(args []string) error {
 	if err != nil {
 		return err
 	}
+	if m.helperOnly && !cfg.TUN {
+		return fmt.Errorf("privileged helper only accepts full-device connections")
+	}
 	if cfg.UI {
 		return fmt.Errorf("nested control servers are not allowed")
 	}
 	if cfg.TUN && !isAdmin() {
+		if h := m.getHelper(); h != nil {
+			_, err := h.request(context.Background(), "/api/start", map[string]interface{}{"args": args})
+			return err
+		}
 		return fmt.Errorf("restart the desktop app as Administrator/root to enable full-device TUN")
 	}
+	m.detachHelper()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.done != nil {
@@ -86,6 +99,14 @@ func (m *controlManager) start(args []string) error {
 	return nil
 }
 func (m *controlManager) stop() error {
+	if h := m.getHelper(); h != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+		defer cancel()
+		_, err := h.request(ctx, "/api/stop", map[string]bool{})
+		if err != nil {
+			return err
+		}
+	}
 	m.mu.Lock()
 	client, done := m.client, m.done
 	m.mu.Unlock()
@@ -101,6 +122,17 @@ func (m *controlManager) stop() error {
 	}
 }
 func (m *controlManager) status() map[string]interface{} {
+	if h := m.getHelper(); h != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		result, err := h.request(ctx, "/api/status", nil)
+		if err != nil {
+			return map[string]interface{}{"state": "error", "error": err.Error(), "logs": "Privileged helper is unavailable; its lease will stop the tunnel.", "administrator": isAdmin()}
+		}
+		result["administrator"] = isAdmin()
+		result["helperAvailable"] = true
+		return result
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	state := "disconnected"
@@ -135,6 +167,10 @@ func (m *controlManager) status() map[string]interface{} {
 			server = net.JoinHostPort(m.client.config.V2Ray.Address, strconv.Itoa(m.client.config.V2Ray.Port))
 			sni = m.client.config.V2Ray.SNI
 		}
+		result["health"] = m.client.getHealth()
+		if state == "connected" && m.client.getHealth().State == "degraded" {
+			result["state"] = "degraded"
+		}
 		result["connection"] = map[string]string{"server": server, "sni": sni, "mode": string(m.client.config.Mode)}
 	}
 	return result
@@ -157,16 +193,44 @@ func controlHandler(host, token string, manager *controlManager) http.Handler {
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Tunnel-Token")), []byte(token)) != 1 {
-			http.Error(w, "unauthorized", 401)
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
 			return
 		}
 		if origin := r.Header.Get("Origin"); origin != "" && origin != "http://"+host {
-			http.Error(w, "invalid origin", 403)
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid origin"})
 			return
+		}
+		if manager.helperOnly {
+			switch r.URL.Path {
+			case "/api/start", "/api/stop", "/api/status", "/api/quit", "/api/lease", "/api/diagnostics":
+			default:
+				http.Error(w, "helper endpoint is restricted", http.StatusForbidden)
+				return
+			}
 		}
 		var result interface{} = map[string]bool{"ok": true}
 		var err error
 		switch r.URL.Path {
+		case "/api/lease":
+			if !manager.helperOnly || r.Method != "POST" {
+				w.WriteHeader(405)
+				return
+			}
+			manager.lastLease.Store(time.Now().UnixNano())
+		case "/api/helper/attach":
+			if manager.helperOnly || r.Method != "POST" {
+				w.WriteHeader(405)
+				return
+			}
+			var req struct {
+				URL string `json:"url"`
+			}
+			err = readJSON(w, r, &req)
+			if err == nil {
+				err = manager.attachHelper(req.URL)
+			}
 		case "/api/status":
 			if r.Method != "GET" {
 				w.WriteHeader(405)
@@ -212,6 +276,33 @@ func controlHandler(host, token string, manager *controlManager) http.Handler {
 			if err == nil {
 				result, err = parseV2RayLink(req.Link)
 			}
+		case "/api/diagnostics":
+			if r.Method != "GET" {
+				w.WriteHeader(405)
+				return
+			}
+			result = manager.diagnostics()
+		case "/api/vault/status":
+			if r.Method != "GET" {
+				w.WriteHeader(405)
+				return
+			}
+			result = manager.profiles.vault.status()
+		case "/api/vault/unlock":
+			if r.Method != "POST" {
+				w.WriteHeader(405)
+				return
+			}
+			var req struct {
+				Password string `json:"password"`
+			}
+			err = readJSON(w, r, &req)
+			if err == nil {
+				err = manager.profiles.vault.unlock(req.Password)
+			}
+			if err == nil {
+				err = manager.profiles.migrateSecrets()
+			}
 		case "/api/profiles":
 			if r.Method != "GET" {
 				w.WriteHeader(405)
@@ -227,6 +318,44 @@ func controlHandler(host, token string, manager *controlManager) http.Handler {
 			err = readJSON(w, r, &req)
 			if err == nil {
 				result, err = manager.profiles.save(req)
+			}
+		case "/api/profiles/share":
+			if r.Method != "POST" {
+				w.WriteHeader(405)
+				return
+			}
+			var req struct {
+				ID       int64  `json:"id"`
+				Password string `json:"password"`
+			}
+			err = readJSON(w, r, &req)
+			if err == nil {
+				var profile savedProfile
+				profile, err = manager.profiles.get(req.ID)
+				if err == nil {
+					var code string
+					code, err = encodeProfileShare(profile, req.Password)
+					if err == nil {
+						result = map[string]string{"code": code}
+					}
+				}
+			}
+		case "/api/profiles/import-shared":
+			if r.Method != "POST" {
+				w.WriteHeader(405)
+				return
+			}
+			var req struct {
+				Code     string `json:"code"`
+				Password string `json:"password"`
+			}
+			err = readJSON(w, r, &req)
+			if err == nil {
+				var profile savedProfile
+				profile, err = decodeProfileShare(req.Code, req.Password)
+				if err == nil {
+					result, err = manager.profiles.saveImported(profile)
+				}
 			}
 		case "/api/profiles/delete":
 			if r.Method != "POST" {
@@ -252,7 +381,11 @@ func controlHandler(host, token string, manager *controlManager) http.Handler {
 	})
 	assets := http.FileServer(http.FS(files))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" && r.URL.Path != "/app.js" && r.URL.Path != "/style.css" {
+		if manager.helperOnly {
+			http.NotFound(w, r)
+			return
+		}
+		if r.URL.Path != "/" && r.URL.Path != "/app.js" && r.URL.Path != "/profile-options.js" && r.URL.Path != "/style.css" && r.URL.Path != "/tunnelnest-mark.png" && r.URL.Path != "/qrcode.js" && r.URL.Path != "/qr-reader.js" && r.URL.Path != "/share-qr.js" {
 			http.NotFound(w, r)
 			return
 		}
@@ -270,7 +403,7 @@ func controlHandler(host, token string, manager *controlManager) http.Handler {
 		mux.ServeHTTP(w, r)
 	})
 }
-func serveControl(ctx context.Context, port int, readyFile string) error {
+func serveControl(ctx context.Context, port int, readyFile string, noBrowser bool, helperOnly bool, helperFile string) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
@@ -284,13 +417,31 @@ func serveControl(ctx context.Context, port int, readyFile string) error {
 	}
 	token := hex.EncodeToString(random)
 	host := listener.Addr().String()
-	manager := &controlManager{shutdown: cancel}
-	manager.profiles, err = openProfileStore()
-	if err != nil {
-		listener.Close()
-		return err
+	manager := &controlManager{shutdown: cancel, helperOnly: helperOnly}
+	if helperOnly {
+		manager.lastLease.Store(time.Now().UnixNano())
+		go watchHelperLease(ctx, cancel, &manager.lastLease)
+	} else {
+		manager.profiles, err = openProfileStore()
+		if err != nil {
+			listener.Close()
+			return err
+		}
+		defer manager.profiles.close()
 	}
-	defer manager.profiles.close()
+	defer manager.detachHelper()
+	if helperFile != "" {
+		raw, err := os.ReadFile(helperFile)
+		if err != nil {
+			listener.Close()
+			return err
+		}
+		if err = manager.attachHelper(string(raw)); err != nil {
+			listener.Close()
+			return err
+		}
+		_ = os.Remove(helperFile)
+	}
 	server := &http.Server{Handler: controlHandler(host, token, manager), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second}
 	address := fmt.Sprintf("http://%s/#%s", host, token)
 	if readyFile != "" {
@@ -300,7 +451,16 @@ func serveControl(ctx context.Context, port int, readyFile string) error {
 		}
 		defer os.Remove(readyFile)
 	}
-	fmt.Printf("CONTROL_URL=%s\n", address)
+	if !helperOnly {
+		fmt.Printf("CONTROL_URL=%s\n", address)
+	}
+	if !noBrowser && readyFile == "" {
+		go func() {
+			if err := openControlBrowser(ctx, address); err != nil && ctx.Err() == nil {
+				fmt.Fprintln(os.Stderr, "[!] Could not open the browser automatically; open the CONTROL_URL printed above.")
+			}
+		}()
+	}
 	go func() {
 		<-ctx.Done()
 		_ = manager.stop()

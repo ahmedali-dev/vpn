@@ -5,7 +5,8 @@ const path=require('node:path');
 const os=require('node:os');
 const fs=require('node:fs/promises');
 const http=require('node:http');
-const {createStartupLogger,checkBundle}=require('./startup.cjs');
+const {createStartupLogger,checkBundle,connectionCoreArgs}=require('./startup.cjs');
+const {prepareShareFile}=require('./share-files.cjs');
 // Keep existing Electron preferences while changing the visible app name.
 const existingUserData=app.getPath('userData');app.setName('TunnelNest');app.setPath('userData',existingUserData);
 let startupLogger;
@@ -21,12 +22,13 @@ function validControl(raw){const url=new URL(raw);if(url.protocol!=='http:'||url
 function requestControl(address,route,body={}){return new Promise((resolve,reject)=>{const url=new URL(route,address);const req=http.request(url,{method:'POST',headers:{'X-Tunnel-Token':address.hash.slice(1),'Content-Type':'application/json'}},res=>{let data='';res.on('data',part=>data+=part);res.on('end',()=>{try{const parsed=JSON.parse(data);if(res.statusCode>=400)reject(new Error(parsed.error||'Control request failed'));else resolve(parsed)}catch(error){reject(error)}})});req.setTimeout(25000,()=>req.destroy(new Error('Control request timed out')));req.on('error',reject);req.end(JSON.stringify(body));});}
 function openWindow(){window=new BrowserWindow({width:1320,height:960,minWidth:820,minHeight:650,title:'TunnelNest',icon:path.join(__dirname,'assets','tunnelnest.png'),backgroundColor:'#f8f6f3',autoHideMenuBar:true,webPreferences:{nodeIntegration:false,contextIsolation:true,sandbox:true,preload:path.join(__dirname,'preload.cjs')}});window.webContents.setWindowOpenHandler(()=>({action:'deny'}));window.webContents.on('will-navigate',(event,url)=>{if(new URL(url).origin!==control.origin)event.preventDefault()});window.webContents.on('did-fail-load',(_event,code,description)=>startupLog('Window load failed '+code+': '+description));window.webContents.on('render-process-gone',(_event,details)=>startupError('Desktop renderer stopped',details.reason));return window.loadURL(control.href);}
 function start(){
+ if(process.platform==='darwin'&&app.dock)app.dock.setIcon(path.join(__dirname,'assets','tunnelnest.png'));
  startupLogger=createStartupLogger(process.platform==='win32'&&process.env.LOCALAPPDATA?path.join(process.env.LOCALAPPDATA,'TunnelDesktop','logs'):path.join(app.getPath('userData'),'logs'));
  startupLog('Starting '+app.getVersion()+' on '+process.platform+' '+process.arch+'; OS '+os.release());
  let executable;
  try{executable=checkBundle(runtimeDir(),process.platform)}catch(error){startupError('Incomplete desktop package',error);app.quit();return}
  startupLog('Engine: '+executable);
- const child=spawn(executable,['-ui'],{cwd:runtimeDir(),windowsHide:true,stdio:['ignore','pipe','pipe']});engine=child;
+ const child=spawn(executable,['-ui','-ui-no-browser'],{cwd:runtimeDir(),windowsHide:true,stdio:['ignore','pipe','pipe']});engine=child;
  let buffer='',errors='';
  const timeout=setTimeout(()=>{if(!control&&engine===child){startupError('Tunnel engine did not become ready','The engine did not start within 30 seconds. '+errors);child.kill();app.quit()}},30000);
  child.stderr.on('data',data=>{errors=(errors+data).slice(-4000);startupLog('Engine stderr: '+data)});
@@ -43,12 +45,12 @@ async function elevateBackend(){
  let launcher,launchError;
  const exe=enginePath();
  if(process.platform==='darwin'){
-  const command=[exe,'-ui','-ui-ready-file',ready].map(shellQuote).join(' ')+' </dev/null >/dev/null 2>&1 &';
+  const command=[exe,'-ui','-ui-helper','-ui-no-browser','-ui-ready-file',ready].map(shellQuote).join(' ')+' </dev/null >/dev/null 2>&1 &';
   launcher=spawn('/usr/bin/osascript',['-e','do shell script '+JSON.stringify(command)+' with administrator privileges'],{stdio:'ignore'});
  }else if(process.platform==='linux'){
-  launcher=spawn('pkexec',[exe,'-ui','-ui-ready-file',ready],{stdio:'ignore'});
+  launcher=spawn('pkexec',[exe,'-ui','-ui-helper','-ui-no-browser','-ui-ready-file',ready],{stdio:'ignore'});
  }else if(process.platform==='win32'){
-  const argumentLine='-ui -ui-ready-file "'+ready+'"';
+  const argumentLine='-ui -ui-helper -ui-no-browser -ui-ready-file "'+ready+'"';
   const script='Start-Process -FilePath '+psQuote(exe)+' -ArgumentList '+psQuote(argumentLine)+' -Verb RunAs -WindowStyle Hidden';
   launcher=spawn('powershell.exe',['-NoProfile','-NonInteractive','-Command',script],{windowsHide:true,stdio:'ignore'});
  }else{throw new Error('Administrator launch is unsupported on this platform')}
@@ -64,6 +66,15 @@ async function elevateBackend(){
   throw new Error('Timed out waiting for the administrator helper');
  }finally{await fs.rm(temporary,{recursive:true,force:true}).catch(()=>{})}
 }
+ipcMain.handle('save-share-file',async(event,request)=>{
+ if(!window||event.sender!==window.webContents||event.senderFrame!==window.webContents.mainFrame||new URL(event.senderFrame.url).origin!==control.origin)throw new Error('Unauthorized desktop request');
+ const file=prepareShareFile(request);
+ const selected=await dialog.showSaveDialog(window,{title:request.format==='qr'?'Save profile QR code':'Save shared profile',defaultPath:path.join(app.getPath('downloads'),file.filename),filters:[{name:file.label,extensions:[file.extension]}]});
+ if(selected.canceled||!selected.filePath)return {cancelled:true};
+ await fs.writeFile(selected.filePath,file.data,{mode:0o600});
+ if(process.platform!=='win32')await fs.chmod(selected.filePath,0o600);
+ return {cancelled:false,filename:path.basename(selected.filePath)};
+});
 ipcMain.handle('connect-privileged',async(event,args)=>{
  if(!window||event.sender!==window.webContents||new URL(event.senderFrame.url).origin!==control.origin)throw new Error('Unauthorized desktop request');
  if(elevating)throw new Error('Administrator authorization is already in progress');
@@ -71,13 +82,10 @@ ipcMain.handle('connect-privileged',async(event,args)=>{
  elevating=true;let elevated;
  try{
   elevated=await elevateBackend();
-  const safeArgs=[...args,'-tun-binary',path.join(runtimeDir(),'cores',process.platform==='win32'?'sing-box.exe':'sing-box')];
-  if(!safeArgs.includes('-mode')||safeArgs[safeArgs.indexOf('-mode')+1]!=='ssh')safeArgs.push('-v2ray-binary',path.join(runtimeDir(),'cores',process.platform==='win32'?'xray.exe':'xray'));
+  const safeArgs=connectionCoreArgs(args,runtimeDir(),process.platform);
   if(safeArgs.includes('-mode')&&safeArgs[safeArgs.indexOf('-mode')+1]==='ssh'&&!safeArgs.includes('-ssh-known-hosts'))safeArgs.push('-ssh-known-hosts',path.join(os.homedir(),'.ssh','known_hosts'));
-  await requestControl(elevated,'/api/start',{args:safeArgs});
-  const old=control;const oldEngine=engine;engine=undefined;control=elevated;
-  await requestControl(old,'/api/quit').catch(()=>{});if(oldEngine)oldEngine.kill();
-  await window.loadURL(control.href);
+  await requestControl(control,'/api/helper/attach',{url:elevated.href});
+  await requestControl(control,'/api/start',{args:safeArgs});
   return {ok:true};
  }catch(error){if(elevated)await requestControl(elevated,'/api/quit').catch(()=>{});throw error}finally{elevating=false}
 });

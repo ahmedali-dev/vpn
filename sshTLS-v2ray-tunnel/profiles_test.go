@@ -8,8 +8,10 @@ import (
 func TestProfileStoreRoundTrip(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("APPDATA", home)
+	t.Setenv("LOCALAPPDATA", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
-	store, err := openProfileStore()
+	store, err := openProfileStoreWithKeys(memoryKeys{})
 	if err != nil {
 		t.Fatal(err)
 	}

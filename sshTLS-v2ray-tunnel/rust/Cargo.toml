@@ -1,0 +1,58 @@
+[package]
+name = "tunnelnest"
+version = "1.3.0"
+edition = "2024"
+description = "TunnelNest Rust tunnel engine and local desktop control service"
+
+[[bin]]
+name = "tunnel"
+path = "src/main.rs"
+
+[features]
+default = []
+desktop = ["dep:wry", "dep:tao", "dep:rfd"]
+
+[dependencies]
+wry = { version = "0.53", optional = true }
+tao = { version = "0.34", optional = true }
+rfd = { version = "0.15", optional = true }
+
+anyhow = "1"
+aes-gcm = "0.10"
+axum = "0.8"
+base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+crc32fast = "1"
+dirs = "6"
+flate2 = "1"
+hex = "0.4"
+httparse = "1"
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
+libc = "0.2"
+openssl = "0.10"
+percent-encoding = "2"
+rand = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "socks", "json"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+russh = { version = "0.54", default-features = false, features = ["ring", "rsa"] }
+rustls = { version = "0.23", default-features = false, features = ["std", "ring"] }
+rustls-native-certs = "0.8"
+scrypt = "0.11"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+subtle = "2"
+tempfile = "3"
+tokio = { version = "1", features = ["full"] }
+tokio-openssl = "0.6"
+tokio-util = { version = "0.7", features = ["rt"] }
+url = "2"
+webbrowser = "1"
+zeroize = "1"
+
+[profile.release]
+lto = "thin"
+strip = true
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
