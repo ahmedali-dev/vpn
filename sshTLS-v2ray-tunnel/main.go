@@ -20,8 +20,14 @@ func main() {
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	if shouldDropUIPrivileges(cfg) {
+		if err := runUnprivilegedUI(ctx, cfg); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	if cfg.UI {
-		if err := serveControl(ctx, cfg.UIPort, cfg.UIReadyFile, cfg.UINoBrowser); err != nil {
+		if err := serveControl(ctx, cfg.UIPort, cfg.UIReadyFile, cfg.UINoBrowser, cfg.UIHelper, cfg.UIHelperAddressFile); err != nil {
 			log.Fatal(err)
 		}
 		return

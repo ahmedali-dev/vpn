@@ -39,6 +39,7 @@ jobs:
       TUNNEL_PACKAGE_TARGET: ${{ matrix.target }}
       CGO_ENABLED: '0'
       GOTOOLCHAIN: local
+      TUNNEL_REQUIRE_SIGNING: ${{ github.ref_type == 'tag' && '1' || '0' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -50,7 +51,7 @@ jobs:
             !/sshTLS-v2ray-tunnel/tunnel
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.25.x'
+          go-version: '1.27.3'
           cache-dependency-path: sshTLS-v2ray-tunnel/go.sum
       - uses: actions/setup-node@v4
         with:
@@ -70,10 +71,17 @@ jobs:
               assert os.environ['GITHUB_REF_NAME']=='v'+version, 'Tag must match desktop/package.json'
           PY
       - name: Install desktop dependencies
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
         run: npm ci --prefix desktop
+      - name: Audit dependencies
+        run: |
+          go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+          npm audit --prefix desktop --audit-level=moderate
       - name: Test engine and desktop logic
         run: |
           go test ./...
+          go vet ./...
           node --test desktop/*.test.cjs
           node --check desktop/ui/app.js
       - name: Build native engine
@@ -85,7 +93,10 @@ jobs:
       - name: Validate generated TUN configurations
         env:
           TUNNEL_VERIFY_BUNDLED_CORES: '1'
-        run: go test -run '^TestBundledSingBoxAcceptsTUNConfig$' -count=1 -v
+        run: go test -run '^TestBundled(SingBoxAcceptsTUNConfig|SSHIPv4DNSFiltersAAAA)$' -count=1 -v
+      - name: Exercise Linux TUN capture in isolated namespaces
+        if: startsWith(matrix.target, 'linux-')
+        run: bash scripts/test-linux-network.sh
       - name: Smoke test bundled executables
         run: |
           python - <<'PY'
@@ -96,6 +107,19 @@ jobs:
           for executable,args in [('tunnel',['-h']),('cores/xray',['version']),('cores/sing-box',['version'])]:
               subprocess.run([str((runtime/(executable+suffix)).resolve()),*args],check=True,timeout=30)
           PY
+      - name: Prepare signing credentials
+        env:
+          MAC_CERT_P12_B64: ${{ secrets.MAC_CERT_P12_B64 }}
+          MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          MAC_SIGN_IDENTITY: ${{ secrets.MAC_SIGN_IDENTITY }}
+          APPLE_API_KEY_B64: ${{ secrets.APPLE_API_KEY_B64 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          WIN_CERT_PFX_B64: ${{ secrets.WIN_CERT_PFX_B64 }}
+          WIN_CERT_PASSWORD: ${{ secrets.WIN_CERT_PASSWORD }}
+        run: python scripts/prepare-signing.py
+      - name: Sign networking executables
+        run: python scripts/sign-runtime.py
       - name: Package desktop
         run: npm --prefix desktop run package
       - name: Include Windows startup diagnostics
@@ -110,6 +134,9 @@ jobs:
           for path in Path('dist/releases').glob('*/SHA256SUMS.txt'):
               path.rename(path.with_name('SHA256SUMS-'+os.environ['TUNNEL_PACKAGE_TARGET']+'.txt'))
           PY
+      - name: Remove temporary signing credentials
+        if: always()
+        run: python scripts/cleanup-signing.py
       - uses: actions/upload-artifact@v4
         with:
           name: tunnel-${{ matrix.target }}

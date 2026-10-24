@@ -1,0 +1,33 @@
+# Compiled applications, packages, and release downloads
+/tunnel
+/tunnel.exe
+dist/
+target/
+/build/
+/release-assets/
+
+# Installed dependencies and local caches
+node_modules/
+.npm/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local logs and environment settings
+*.log
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# Operating-system and editor temporary files
+.DS_Store
+._*
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
+*~
+
+# Standalone Windows executable
+/vpn.exe

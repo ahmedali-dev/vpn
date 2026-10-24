@@ -1,0 +1,4 @@
+[env]
+# Prefer static OpenSSL so packaged engines do not require a Homebrew installation.
+# Install OpenSSL development libraries (including static archives) before building.
+OPENSSL_STATIC = "1"

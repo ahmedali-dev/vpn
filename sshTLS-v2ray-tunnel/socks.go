@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -163,20 +164,33 @@ func (v *VPNClient) readSOCKS5Address(conn net.Conn, atyp byte) (string, error) 
 }
 
 func (v *VPNClient) dialThroughSSH(addr string) (net.Conn, error) {
+	if v.config.SSHIPv4Only {
+		host, _, err := net.SplitHostPort(addr)
+		if ip := net.ParseIP(host); err == nil && ip != nil && ip.To4() == nil {
+			return nil, fmt.Errorf("IPv6 destination rejected by SSH IPv4 compatibility; use an IPv4 address or hostname")
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(v.ctx, ConnectionTimeout)
+	defer cancel()
 	v.connPool.dialAttempts.Add(1)
+	var lastErr error
 
 	for retry := 0; retry < 3; retry++ {
 		client := v.connPool.GetClient()
 		if client == nil {
 			if retry < 2 {
-				time.Sleep(100 * time.Millisecond)
+				if !sleepContext(ctx, 100*time.Millisecond) {
+					return nil, ctx.Err()
+				}
 				continue
 			}
 			v.connPool.dialErrors.Add(1)
 			return nil, fmt.Errorf("SSH client not available")
 		}
 
-		conn, err := client.Dial("tcp", addr)
+		conn, err := client.DialContext(ctx, "tcp", addr)
+		lastErr = err
 		if err == nil {
 			v.connPool.MarkHealthy()
 			return conn, nil
@@ -187,12 +201,22 @@ func (v *VPNClient) dialThroughSSH(addr string) (net.Conn, error) {
 		}
 
 		if retry < 2 {
-			time.Sleep(time.Duration(retry+1) * 200 * time.Millisecond)
+			if !sleepContext(ctx, time.Duration(retry+1)*200*time.Millisecond) {
+				return nil, ctx.Err()
+			}
 		}
 	}
 
-	v.connPool.dialErrors.Add(1)
-	return nil, fmt.Errorf("failed to dial through SSH tunnel")
+	count := v.connPool.dialErrors.Add(1)
+	if count <= 3 || count%25 == 0 {
+		family := "hostname/IPv4"
+		host, _, _ := net.SplitHostPort(addr)
+		if ip := net.ParseIP(host); ip != nil && ip.To4() == nil {
+			family = "IPv6"
+		}
+		v.logf("[!] SSH forwarding (%s) to %s failed: %v (failure %d)\n", family, addr, lastErr, count)
+	}
+	return nil, fmt.Errorf("failed to dial through SSH tunnel: %w", lastErr)
 }
 
 func (v *VPNClient) sendSOCKS5Reply(conn net.Conn, replyCode byte) error {

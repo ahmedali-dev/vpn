@@ -87,6 +87,10 @@ func generateTUNConfig(cfg Config, excluded []string) ([]byte, error) {
 
 func generateTUNConfigForPlatform(cfg Config, excluded []string, platform string) ([]byte, error) {
 	outbound := map[string]interface{}{"type": "socks", "tag": "proxy", "server": "127.0.0.1", "server_port": cfg.SOCKSPort, "version": "5"}
+	dnsStrategy := "prefer_ipv4"
+	if cfg.Mode == ModeSSH && cfg.SSHIPv4Only {
+		dnsStrategy = "ipv4_only"
+	}
 	rules := []map[string]interface{}{{"port": 53, "action": "hijack-dns"}}
 	if cfg.Mode == ModeSSH {
 		outbound["network"] = "tcp"
@@ -100,7 +104,7 @@ func generateTUNConfigForPlatform(cfg Config, excluded []string, platform string
 		"log":       map[string]interface{}{"level": "info", "timestamp": true},
 		"inbounds":  []map[string]interface{}{inbound},
 		"outbounds": []map[string]interface{}{outbound},
-		"dns":       map[string]interface{}{"servers": []map[string]interface{}{{"type": "tcp", "tag": "tunnel-dns", "server": "1.1.1.1", "detour": "proxy"}}, "final": "tunnel-dns", "strategy": "prefer_ipv4"},
+		"dns":       map[string]interface{}{"servers": []map[string]interface{}{{"type": "tcp", "tag": "tunnel-dns", "server": "1.1.1.1", "detour": "proxy"}}, "final": "tunnel-dns", "strategy": dnsStrategy},
 		"route":     map[string]interface{}{"auto_detect_interface": true, "rules": rules, "final": "proxy"},
 	}, "", "  ")
 }

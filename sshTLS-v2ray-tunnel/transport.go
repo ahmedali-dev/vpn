@@ -106,19 +106,20 @@ func (v *VPNClient) sshHostKeyCallback() (ssh.HostKeyCallback, error) {
 			return nil
 		}, nil
 	}
-	if v.config.SSHUnverifiedPin {
+	if v.config.SSHTrustOnFirstUse {
 		// Compatibility mode uses session-scoped TOFU for the SSH host key. This
 		// lets legacy servers work without a known_hosts file while still
 		// rejecting a key change during the same handshake/session.
-		var observed string
 		return func(host string, remote net.Addr, key ssh.PublicKey) error {
+			v.trustMu.Lock()
+			defer v.trustMu.Unlock()
 			current := ssh.FingerprintSHA256(key)
-			if observed == "" {
-				observed = current
+			if v.observedSSHKey == "" {
+				v.observedSSHKey = current
 				v.logf("[!] SSH compatibility mode: accepting session host key %s; configure Trusted SSH fingerprint for persistent verification.\n", current)
 				return nil
 			}
-			if observed != current {
+			if v.observedSSHKey != current {
 				return fmt.Errorf("SSH host-key changed during session for %s", host)
 			}
 			return nil
