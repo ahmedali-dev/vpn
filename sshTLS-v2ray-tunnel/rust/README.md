@@ -75,6 +75,37 @@ Live third-party VPN connections, native authorization prompts, and actual route
 
 ## Push code and publish a GitHub release
 
+### One-command local builds
+
+Run the matching script from the application checkout. All scripts use the version already set in `rust/Cargo.toml`, fetch checksum-verified networking cores, build the Tauri desktop app, and write packages/checksums to `rust/dist/release/`.
+
+```sh
+# Linux: automatically choose Ubuntu 24.04, Fedora 44, or Arch.
+bash rust/scripts/build_for_all.sh
+# Or choose a single distribution explicitly:
+bash rust/scripts/build_for_ubuntu.sh
+bash rust/scripts/build_for_fedora.sh
+bash rust/scripts/build_for_arch.sh
+# Check dependencies without installing or building (exit 1 when missing):
+bash rust/scripts/build_for_all.sh --check
+```
+
+On Windows, open **64-bit PowerShell**:
+
+```powershell
+.\rust\scripts\build_for_all.ps1
+# Or the Windows-only entry point:
+.\rust\scripts\build_for_windows.ps1
+# Check only:
+.\rust\scripts\build_for_windows.ps1 -Check
+```
+
+`build_for_all` detects the current OS and runs its native build; it does not cross-compile four operating systems on one machine. Use GitHub Actions below to build all four together. Windows Git Bash can also run `build_for_all.sh`.
+
+Missing Linux dependencies are installed with apt, dnf, or pacman, using sudo only for system package operations. Arch installs missing packages with `pacman -Syu`, which also upgrades the system to avoid partial upgrades. Missing Rust stable is installed through rustup under the invoking user. Windows checks Python, Git, C++ Build Tools/Windows SDK, Rust stable MSVC, WebView2, and vcpkg OpenSSL; missing tools are installed with winget, the signed Microsoft Build Tools installer, and vcpkg. Windows needs Microsoft's App Installer (`winget`) for automatic package installation and may show administrator prompts or request a restart. OpenSSL is built using the same static MSVC triplet as CI. Node/Electron is not needed for these native builds.
+
+These scripts require x86_64/AMD64 hosts. Ubuntu/Fedora versions are checked so package labels match the build distribution. To set the version first, run `python3 rust/scripts/version.py X.Y.Z` (Windows: `py -3 rust/scripts/version.py X.Y.Z`). The local build scripts do not commit, push, or publish releases.
+
 ### Build Windows, DEB, RPM, and Arch packages without publishing
 
 GitHub Actions builds Windows x64 (`.zip` containing `tunnel.exe`), Ubuntu 24.04 x64 (`.deb`), Fedora 44 x64 (`.rpm`), and Arch Linux x64 (`.pkg.tar.zst`). Portable Linux `.tar.gz` files are retained. The package installs a `tunnelnest` launcher, application-menu entry, icon, and networking cores. macOS is excluded from CI builds.
