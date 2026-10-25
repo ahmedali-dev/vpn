@@ -10,11 +10,10 @@ path = "src/main.rs"
 
 [features]
 default = []
-desktop = ["dep:wry", "dep:tao", "dep:rfd"]
+desktop = ["dep:tauri", "dep:tauri-build", "dep:rfd"]
 
 [dependencies]
-wry = { version = "0.53", optional = true }
-tao = { version = "0.34", optional = true }
+tauri = { version = "2", features = ["custom-protocol"], optional = true }
 rfd = { version = "0.15", optional = true }
 
 anyhow = "1"
@@ -49,6 +48,9 @@ tokio-util = { version = "0.7", features = ["rt"] }
 url = "2"
 webbrowser = "1"
 zeroize = "1"
+
+[build-dependencies]
+tauri-build = { version = "2", optional = true }
 
 [profile.release]
 lto = "thin"

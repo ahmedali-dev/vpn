@@ -1,11 +1,10 @@
-//! Rust desktop shell. The embedded HTML/CSS interface uses the same local API as CLI -ui.
+//! Tauri desktop shell around the Rust engine and embedded interface.
 use crate::{
     config::Config,
     control::{self, helper_request, valid_helper},
 };
 use anyhow::{Context, Result, bail, ensure};
 use base64::{Engine, engine::general_purpose::STANDARD};
-use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{
     io::Write,
@@ -15,31 +14,111 @@ use std::{
     },
     time::Duration,
 };
-use tao::{
-    event::{Event, WindowEvent},
-    event_loop::{ControlFlow, EventLoopBuilder},
-    window::WindowBuilder,
-};
+use tauri::{RunEvent, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent};
 use tokio_util::sync::CancellationToken;
 
-const BRIDGE: &str = r#"(() => {
-if(window!==window.top)return;
-let next=0;const pending=new Map();
-window.__tnNativeComplete=(id,value,error)=>{const p=pending.get(id);if(!p)return;pending.delete(id);if(error)p.reject(new Error(error));else p.resolve(value);};
-const call=(kind,value)=>new Promise((resolve,reject)=>{const id=++next;pending.set(id,{resolve,reject});window.ipc.postMessage(JSON.stringify({id,kind,value}));});
-Object.defineProperty(window,'tunnelDesktop',{value:Object.freeze({connectPrivileged:args=>call('connect',args),saveShareFile:request=>call('save',request)}),writable:false});
-})();"#;
-#[derive(Debug)]
-enum NativeEvent {
-    Reply(u64, Value, Option<String>),
-    Exit,
+struct DesktopState {
+    control: url::Url,
+    busy: AtomicBool,
 }
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Message {
-    id: u64,
-    kind: String,
-    value: Value,
+
+pub fn app_navigation_allowed(url: &url::Url) -> bool {
+    url.username().is_empty()
+        && url.password().is_none()
+        && url.port().is_none()
+        && match url.scheme() {
+            "tauri" => url.host_str() == Some("localhost"),
+            "http" | "https" => url.host_str() == Some("tauri.localhost"),
+            _ => false,
+        }
+}
+
+fn validate_window(window: &WebviewWindow) -> Result<()> {
+    ensure!(
+        window.label() == "main" && app_navigation_allowed(&window.url()?),
+        "native commands require the bundled main window"
+    );
+    Ok(())
+}
+
+pub async fn request_control(control: &url::Url, path: &str, body: Option<Value>) -> Result<Value> {
+    valid_helper(control.as_str())?;
+    let get = ["status", "profiles", "vault/status", "diagnostics", "logs"].contains(&path);
+    let post = [
+        "start",
+        "stop",
+        "import",
+        "vault/unlock",
+        "profiles/save",
+        "profiles/delete",
+        "profiles/share",
+        "profiles/import-shared",
+        "logs/read",
+    ]
+    .contains(&path);
+    ensure!(
+        (get && body.is_none()) || (post && body.is_some()),
+        "unsupported desktop control request"
+    );
+    if let Some(body) = &body {
+        ensure!(
+            serde_json::to_vec(body)?.len() <= 65536,
+            "desktop control request too large"
+        );
+    }
+    helper_request(control, path, body).await
+}
+
+#[tauri::command]
+async fn control_request(
+    window: WebviewWindow,
+    state: tauri::State<'_, DesktopState>,
+    path: String,
+    body: Option<Value>,
+) -> std::result::Result<Value, String> {
+    let result = async {
+        validate_window(&window)?;
+        request_control(&state.control, &path, body).await
+    }
+    .await;
+    result.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn connect_full_device(
+    window: WebviewWindow,
+    state: tauri::State<'_, DesktopState>,
+    args: Vec<String>,
+) -> std::result::Result<Value, String> {
+    let result = async {
+        validate_window(&window)?;
+        ensure!(
+            !state.busy.swap(true, Ordering::SeqCst),
+            "Administrator authorization is already in progress"
+        );
+        let result = connect_privileged(state.control.clone(), json!(args)).await;
+        state.busy.store(false, Ordering::SeqCst);
+        result
+    }
+    .await;
+    result.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn save_shared_profile(
+    window: WebviewWindow,
+    request: Value,
+) -> std::result::Result<Value, String> {
+    validate_window(&window).map_err(|e| e.to_string())?;
+    // Native dialogs must run on the UI thread; never block Tauri's async worker.
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    window
+        .run_on_main_thread(move || {
+            let result = save_share_file(request).map_err(|e| e.to_string());
+            let _ = sender.send(result);
+        })
+        .map_err(|e| e.to_string())?;
+    receiver.await.map_err(|e| e.to_string())?
 }
 
 pub fn run() -> Result<()> {
@@ -47,8 +126,10 @@ pub fn run() -> Result<()> {
         !crate::runtime::is_admin(),
         "launch the desktop window as your normal user"
     );
-    let runtime = Arc::new(tokio::runtime::Runtime::new()?);
+    let runtime = tokio::runtime::Runtime::new()?;
+    tauri::async_runtime::set(runtime.handle().clone());
     let cancel = CancellationToken::new();
+    let finished = Arc::new(AtomicBool::new(false));
     let (sender, ready) = tokio::sync::oneshot::channel();
     let config = Config::parse(&["-ui".into(), "-ui-no-browser".into()])?;
     let server = runtime.spawn(control::serve_with_ready(
@@ -56,125 +137,94 @@ pub fn run() -> Result<()> {
         cancel.clone(),
         Some(sender),
     ));
+    let raw = match runtime
+        .block_on(async { tokio::time::timeout(Duration::from_secs(30), ready).await })
+    {
+        Ok(Ok(raw)) => raw,
+        other => {
+            cancel.cancel();
+            bail!("desktop control service did not start: {other:?}")
+        }
+    };
+    let control_url = valid_helper(&raw)?;
+    let close_cancel = cancel.clone();
+    let app = tauri::Builder::default()
+        .manage(DesktopState {
+            control: control_url,
+            busy: AtomicBool::new(false),
+        })
+        .invoke_handler(tauri::generate_handler![
+            control_request,
+            connect_full_device,
+            save_shared_profile
+        ])
+        .setup(|app| {
+            WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+                .title("TunnelNest · Rust")
+                .inner_size(1320., 960.)
+                .min_inner_size(820., 650.)
+                .initialization_script(include_str!("../desktop/tauri-bridge.js"))
+                .on_navigation(app_navigation_allowed)
+                .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
+                .build()?;
+            Ok(())
+        })
+        .on_window_event(move |_, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                close_cancel.cancel();
+            }
+        })
+        .build(tauri::generate_context!());
+    let app = match app {
+        Ok(app) => app,
+        Err(error) => {
+            cancel.cancel();
+            runtime.block_on(async {
+                let _ = server.await;
+            });
+            return Err(error.into());
+        }
+    };
+    let handle = app.handle().clone();
+    let exited = finished.clone();
+    let watcher = runtime.spawn(async move {
+        let code = match server.await {
+            Ok(Ok(())) => 0,
+            error => {
+                eprintln!("Desktop control service stopped: {error:?}");
+                1
+            }
+        };
+        exited.store(true, Ordering::SeqCst);
+        handle.exit(code);
+    });
     let signal_cancel = cancel.clone();
     runtime.spawn(async move {
         #[cfg(unix)]
+        if let Ok(mut term) =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         {
-            if let Ok(mut term) =
-                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            {
-                tokio::select! {_=tokio::signal::ctrl_c()=>(),_=term.recv()=>()}
-            }
+            tokio::select! {_=tokio::signal::ctrl_c()=>(),_=term.recv()=>()}
         }
         #[cfg(not(unix))]
-        {
-            let _ = tokio::signal::ctrl_c().await;
-        }
+        let _ = tokio::signal::ctrl_c().await;
         signal_cancel.cancel();
     });
-    let raw = runtime
-        .block_on(async { tokio::time::timeout(Duration::from_secs(30), ready).await })??;
-    let control_url = valid_helper(&raw)?;
-    let origin = control_url.origin().ascii_serialization();
-    let event_loop = EventLoopBuilder::<NativeEvent>::with_user_event().build();
-    let proxy = event_loop.create_proxy();
-    let exit_proxy = proxy.clone();
-    runtime.spawn(async move {
-        let _ = server.await;
-        let _ = exit_proxy.send_event(NativeEvent::Exit);
-    });
-    let window = WindowBuilder::new()
-        .with_title("TunnelNest · Rust")
-        .with_inner_size(tao::dpi::LogicalSize::new(1320., 960.))
-        .with_min_inner_size(tao::dpi::LogicalSize::new(820., 650.))
-        .build(&event_loop)?;
-    let busy = Arc::new(AtomicBool::new(false));
-    let rt = runtime.clone();
-    let proxy_ipc = proxy.clone();
-    let ipc_origin = origin.clone();
-    let builder = wry::WebViewBuilder::new()
-        .with_url(&raw)
-        .with_initialization_script(BRIDGE)
-        .with_navigation_handler(move |url| {
-            url::Url::parse(&url).is_ok_and(|u| u.origin().ascii_serialization() == origin)
-        })
-        .with_new_window_req_handler(|_, _| wry::NewWindowResponse::Deny)
-        .with_ipc_handler(move |request| {
-            if request.body().len() > 2 * 1024 * 1024
-                || !url::Url::parse(&request.uri().to_string())
-                    .is_ok_and(|u| u.origin().ascii_serialization() == ipc_origin)
-            {
-                return;
-            }
-            let Ok(message) = serde_json::from_str::<Message>(request.body()) else {
-                return;
-            };
-            let id = message.id;
-            if message.kind == "save" {
-                let result = save_share_file(message.value);
-                let event = match result {
-                    Ok(v) => NativeEvent::Reply(id, v, None),
-                    Err(e) => NativeEvent::Reply(id, Value::Null, Some(e.to_string())),
-                };
-                let _ = proxy_ipc.send_event(event);
-            } else if message.kind == "connect" {
-                if busy.swap(true, Ordering::SeqCst) {
-                    let _ = proxy_ipc.send_event(NativeEvent::Reply(
-                        id,
-                        Value::Null,
-                        Some("Administrator authorization is already in progress".into()),
-                    ));
-                    return;
-                }
-                let url = control_url.clone();
-                let proxy = proxy_ipc.clone();
-                let busy = busy.clone();
-                rt.spawn(async move {
-                    let result = connect_privileged(url, message.value).await;
-                    busy.store(false, Ordering::SeqCst);
-                    let event = match result {
-                        Ok(v) => NativeEvent::Reply(id, v, None),
-                        Err(e) => NativeEvent::Reply(id, Value::Null, Some(e.to_string())),
-                    };
-                    let _ = proxy.send_event(event);
-                });
-            }
-        });
-    #[cfg(target_os = "linux")]
-    let webview = {
-        use tao::platform::unix::WindowExtUnix;
-        use wry::WebViewBuilderExtUnix;
-        builder.build_gtk(
-            window
-                .default_vbox()
-                .context("GTK window container unavailable")?,
-        )?
-    };
-    #[cfg(not(target_os = "linux"))]
-    let webview = builder.build(&window)?;
-    let mut closing = false;
-    event_loop.run(move |event, _, flow| {
-        *flow = ControlFlow::Wait;
-        match event {
-            Event::WindowEvent {
-                event: WindowEvent::CloseRequested,
-                ..
-            } if !closing => {
-                closing = true;
-                cancel.cancel();
-            }
-            Event::UserEvent(NativeEvent::Reply(id, value, error)) => {
-                let script = format!(
-                    "window.__tnNativeComplete({id},{},{});",
-                    value,
-                    serde_json::to_string(&error).unwrap()
-                );
-                let _ = webview.evaluate_script(&script);
-            }
-            Event::UserEvent(NativeEvent::Exit) => *flow = ControlFlow::Exit,
-            _ => (),
+    let exit_cancel = cancel.clone();
+    app.run(move |_, event| {
+        if let RunEvent::ExitRequested { api, .. } = event
+            && !finished.load(Ordering::SeqCst)
+        {
+            api.prevent_exit();
+            exit_cancel.cancel();
         }
     });
+    cancel.cancel();
+    runtime.block_on(async {
+        let _ = tokio::time::timeout(Duration::from_secs(15), watcher).await;
+    });
+    Ok(())
 }
 
 pub fn share_file_bytes(request: &Value) -> Result<(String, String, Vec<u8>)> {

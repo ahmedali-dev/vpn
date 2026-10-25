@@ -1,10 +1,10 @@
 # TunnelNest — Rust port
 
-A separate Rust implementation of the tunnel engine, local control service, and native desktop window. The existing HTML/CSS/JavaScript interface is embedded into the Rust binary. The native window uses Wry/Tao and the operating system webview; Electron is optional. No Go executable or Go toolchain is needed to run or build this port.
+A separate Rust implementation of the tunnel engine, local control service, and native desktop window. The existing HTML/CSS/JavaScript interface is embedded into the Rust binary. The native desktop shell uses Tauri 2 and the operating system webview; the previous direct Wry/Tao shell has been replaced. Electron remains optional. No Go executable or Go toolchain is needed to run or build this port.
 
 ## Build and run
 
-Install stable Rust and OpenSSL development libraries, including static archives. On macOS, `brew install openssl@3 pkg-config` supplies these. Linux additionally needs a C compiler, pkg-config, and OpenSSL headers. The native desktop feature also needs GTK 3 and WebKitGTK 4.1 development packages on Linux, or the WebView2 runtime on Windows. Node is only needed for the optional Electron shell and existing JavaScript tests.
+Install stable Rust and OpenSSL development libraries, including static archives. On macOS, `brew install openssl@3 pkg-config` supplies these. Linux additionally needs a C compiler, pkg-config, and OpenSSL headers. The Tauri desktop feature also needs GTK 3 and WebKitGTK 4.1 development packages on Linux, or the WebView2 runtime on Windows. The frontend is plain HTML/CSS/JavaScript bundled by Tauri; no frontend build server is required. Node is only needed for the optional Electron shell and existing JavaScript tests.
 
 ```sh
 cd rust
@@ -12,7 +12,7 @@ cargo build --release --features desktop --locked
 ./target/release/tunnel --desktop
 ```
 
-With the desktop feature enabled, launching without arguments also opens the native window. For a smaller CLI/browser-only build:
+With the desktop feature enabled, launching without arguments also opens the Tauri window. For a smaller CLI/browser-only build:
 
 ```sh
 cargo build --release --locked
@@ -48,10 +48,14 @@ Use the matching platform key: `darwin-arm64`, `darwin-x64`, `linux-x64`, `linux
 - Certificate validation by default. Alternate SNI can use an automatically discovered certificate pin only after verification against the real hostname. Explicit `insecure` compatibility pins are kept only for the current connection session. SSH key trust remains independent.
 - Loopback SOCKS5 and PAC, capped SSH connections, HTTPS startup checks, health monitoring, bounded reconnect backoff, child-process cleanup, and private temporary configs.
 - Full-device sing-box routing with upstream exclusions, tunneled DNS, Linux auto_redirect, and a second check through system routing. SSH carries TCP; general UDP is rejected. IPv4 compatibility filters AAAA and HTTPS/SVCB DNS hints. For cached IPv6 TLS/HTTP destinations it recovers the visible server hostname and forwards the original request unchanged through SSH with remote DNS. Other literal IPv6 destinations remain blocked. If an application retains encrypted or non-HTTP IPv6 requests from before VPN activation, restart that application to clear its cache; disable IPv4 compatibility only when the SSH server supports IPv6.
-- The native window supports administrator authorization and saving profile/QR files. The elevated helper exposes only networking endpoints and stops when its parent lease expires. Profiles and the window remain under the normal user.
+- The Tauri window supports administrator authorization and saving profile/QR files. The elevated helper exposes only networking endpoints and stops when its parent lease expires. Profiles and the window remain under the normal user.
 - AES-256-GCM encrypted SQLite profiles, OS credential storage with a master-password fallback, and session-only credentials. Password keys use scrypt. The Rust profile store and keychain namespace are separate (`TunnelNestRust`), preserving the Go application's data.
 - Compatible `TN2.`, `TN2P.`, and legacy `TN1.` imports. New exports use TN2/TN2P. Transfer existing profiles with shared profile files/codes; the Go SQLite database is not opened or migrated automatically.
 - Random session-token authentication, loopback Host/Origin checks, restricted helper routes, request-size limits, and a fixed allowlist of embedded UI assets. Diagnostics omit endpoints, credentials, and raw core logs.
+
+The Tauri configuration lives in `tauri.conf.json`; `build.rs` generates permissions for exactly three application commands. The bundled `main` window can request allowlisted control operations, start the existing administrator helper, and save validated profile/QR exports. Remote web pages receive no capabilities, external navigation and popups are blocked, and a content security policy limits resources to bundled assets and Tauri IPC. The control token remains in Rust and is never placed in the desktop URL or frontend storage. CLI/browser mode retains its authenticated loopback API. Window close and application quit wait for the control service to stop its tunnel/helper before exiting.
+
+`python3 scripts/build.py` continues to use Cargo directly with the Tauri desktop feature; DEB, RPM, Arch x86_64/aarch64, and Windows portable packaging continue to include cores beside the executable. There is no Tauri JavaScript CLI dependency. `cargo build --release --locked` without `--features desktop` remains the CLI-only build.
 
 The optional Electron shell is kept in `desktop/` for compatibility. It runs the Rust binary from this folder's `dist/runtime/`. Use Node 22.12+ and `npm ci --prefix desktop`, then `npm start --prefix desktop`. The native Rust window needs neither npm nor Electron.
 
