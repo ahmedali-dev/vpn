@@ -176,7 +176,7 @@ Linux release builds use Ubuntu 24.04, Fedora 44, and official Arch Linux contai
 
 ## Desktop appearance and dropdowns
 
-The desktop uses the Nocturne interface: a dark control room with lime accents, quick connection controls, real session details, live activity, and the saved profile library. Selecting a profile updates the quick connection panel. Its full-device toggle overrides routing for the next connection without rewriting the saved profile; changing profiles restores that profile's saved routing setting. Routing controls lock while a connection is active.
+The desktop uses the Nocturne interface: a white control room with soft green accents, quick connection controls, real session details, live activity, and the saved profile library. Selecting a profile updates the quick connection panel. Its full-device toggle overrides routing for the next connection without rewriting the saved profile; changing profiles restores that profile's saved routing setting. Routing controls lock while a connection is active.
 
 All select controls use styled dropdown menus, including connection mode, TLS and certificate settings, transports, saved log files, and severity. The hidden native selects remain form models so existing imports, resets, and option values are preserved. Dropdowns support mouse selection, arrow keys, Home/End, Enter/Space, typing to find an option, Tab, and Escape. Dynamic log options refresh without replacing an unchanged menu.
 
