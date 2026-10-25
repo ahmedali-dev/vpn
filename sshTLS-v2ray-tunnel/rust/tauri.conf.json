@@ -3,7 +3,8 @@
   "productName": "TunnelNest Rust",
   "identifier": "org.tunnelnest.rust",
   "build": {
-    "frontendDist": "desktop/ui"
+    "frontendDist": "desktop/ui",
+    "features": ["desktop"]
   },
   "app": {
     "windows": [],
