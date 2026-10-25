@@ -13,3 +13,11 @@ test('manual protocol fields survive editing without a share link',()=>{
  assert.ok(result.includes('-v2ray-uuid'));assert.ok(result.includes('-v2ray-addr'));
  assert.ok(!merge(result,['-mode','ssh']).includes('-v2ray-uuid'));
 });
+
+test('quick routing overrides preserve arguments and do not rewrite saved profiles',()=>{
+ const {withRouting}=require('./ui/profile-options.js');
+ const original=['-mode','ssh','-p','-tun','-auto-route','-max-conns','5'];
+ assert.deepEqual(withRouting(original,false),['-mode','ssh','-p','-tun','-max-conns','5']);
+ assert.deepEqual(withRouting(original,true),['-mode','ssh','-p','-tun','-max-conns','5','-tun']);
+ assert.deepEqual(original,['-mode','ssh','-p','-tun','-auto-route','-max-conns','5']);
+});

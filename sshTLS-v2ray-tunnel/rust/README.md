@@ -174,6 +174,12 @@ The versioning, build, packaging, push, and release steps run only when you expl
 
 Linux release builds use Ubuntu 24.04, Fedora 44, and official Arch Linux containers, all on x86_64 runners. Windows uses an x64 runner. No ARM64, 32-bit, or macOS release assets are built. The workflow uses Fedora's `webkit2gtk4.1-devel` and Arch's `webkit2gtk-4.1` development packages. Packaging verifies that the app, Xray, and sing-box match the selected architecture.
 
+## Desktop appearance and dropdowns
+
+The desktop uses the Nocturne interface: a dark control room with lime accents, quick connection controls, real session details, live activity, and the saved profile library. Selecting a profile updates the quick connection panel. Its full-device toggle overrides routing for the next connection without rewriting the saved profile; changing profiles restores that profile's saved routing setting. Routing controls lock while a connection is active.
+
+All select controls use styled dropdown menus, including connection mode, TLS and certificate settings, transports, saved log files, and severity. The hidden native selects remain form models so existing imports, resets, and option values are preserved. Dropdowns support mouse selection, arrow keys, Home/End, Enter/Space, typing to find an option, Tab, and Escape. Dynamic log options refresh without replacing an unchanged menu.
+
 ## Saved connection logs
 
 The **Logs** button sits between **All profiles** and **V2Ray** in the profile navigation. It opens the saved log viewer with file selection, message search, severity filters, live following, full-file download, and a copyable folder path. Clearing the activity panel clears only its display; saved files remain available after disconnecting or restarting the app.

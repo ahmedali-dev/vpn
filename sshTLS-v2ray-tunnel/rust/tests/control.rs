@@ -50,6 +50,7 @@ async fn authenticated_control_and_static_assets() {
         ),
         ("/", "127.0.0.1:12345", "", "", StatusCode::OK),
         ("/app.js", "127.0.0.1:12345", "", "", StatusCode::OK),
+        ("/dropdowns.js", "127.0.0.1:12345", "", "", StatusCode::OK),
         ("/qr-reader.js", "127.0.0.1:12345", "", "", StatusCode::OK),
         (
             "/../../Cargo.toml",

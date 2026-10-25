@@ -11,5 +11,6 @@
   const keep=pairs(original).filter(([flag])=>!editorFlags.has(flag)&&!(oldMode!==newMode&&(flag.startsWith('-v2ray-')||flag.startsWith('-ssh-'))));
   return [...keep.flat(),...edited];
  }
- const api={normalize,merge};if(typeof module==='object')module.exports=api;else root.TunnelNestProfileOptions=api;
+ function withRouting(original,enabled){const result=pairs(normalize(original)).filter(([flag])=>flag!=='-tun').flat();return enabled?[...result,'-tun']:result;}
+ const api={normalize,merge,withRouting};if(typeof module==='object')module.exports=api;else root.TunnelNestProfileOptions=api;
 })(typeof globalThis==='object'?globalThis:this);
