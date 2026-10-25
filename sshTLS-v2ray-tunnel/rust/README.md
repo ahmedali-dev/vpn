@@ -180,6 +180,12 @@ The desktop uses the Nocturne interface: a white control room with soft green ac
 
 All select controls use styled dropdown menus, including connection mode, TLS and certificate settings, transports, saved log files, and severity. The hidden native selects remain form models so existing imports, resets, and option values are preserved. Dropdowns support mouse selection, arrow keys, Home/End, Enter/Space, typing to find an option, Tab, and Escape. Dynamic log options refresh without replacing an unchanged menu.
 
+The top **Add / import** menu combines manual setup, pasted share codes, profile files, and QR images. Drop a single file, share code, or supported protocol link on the button/menu, or use the import dialog. Dropped files and codes are staged for review; protected shares still require their password and explicit validation before saving. Dropped protocol links open the editor. None of these actions starts a connection. File and QR size limits apply equally to browsing and dropping files.
+
+The sidebar arrow pins it open or collapses it. When collapsed, hovering reveals labels temporarily and leaving closes it again; keyboard focus also reveals navigation labels. The pinned preference is stored locally. SSH fingerprint, known_hosts, and session-only first-use trust settings are grouped under **Trusted SSH fingerprint**, alongside the existing HTTP CONNECT section. Saved trust settings expand the section when editing.
+
+New desktop profiles default to **Compatibility** for TLS certificate verification in both SSH and V2Ray modes. This accepts unverified TLS certificates and retains a temporary certificate pin until disconnect; SSH host-key verification is independent. Existing saved profiles retain their explicit verification choices, and profiles without a saved certificate option continue to use Automatic.
+
 ## Saved connection logs
 
 The **Logs** button sits between **All profiles** and **V2Ray** in the profile navigation. It opens the saved log viewer with file selection, message search, severity filters, live following, full-file download, and a copyable folder path. Clearing the activity panel clears only its display; saved files remain available after disconnecting or restarting the app.

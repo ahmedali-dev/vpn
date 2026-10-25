@@ -507,6 +507,10 @@ fn asset(path: &str) -> Response {
             include_bytes!("../desktop/ui/dropdowns.js"),
             "text/javascript; charset=utf-8",
         ),
+        "/profile-input.js" => (
+            include_bytes!("../desktop/ui/profile-input.js"),
+            "text/javascript; charset=utf-8",
+        ),
         "/profile-options.js" => (
             include_bytes!("../desktop/ui/profile-options.js"),
             "text/javascript; charset=utf-8",

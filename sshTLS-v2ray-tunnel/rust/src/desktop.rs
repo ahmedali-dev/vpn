@@ -163,6 +163,8 @@ pub fn run() -> Result<()> {
                 .title("TunnelNest · Rust")
                 .inner_size(1320., 960.)
                 .min_inner_size(820., 650.)
+                // Let HTML drop zones receive files rather than native path-only events.
+                .disable_drag_drop_handler()
                 .initialization_script(include_str!("../desktop/tauri-bridge.js"))
                 .on_navigation(app_navigation_allowed)
                 .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
