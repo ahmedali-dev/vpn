@@ -4,13 +4,12 @@ import argparse
 import hashlib
 import pathlib
 import shutil
-import subprocess
 import tarfile
 import tempfile
 from version import VERSION, package_version
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-TARGETS = ('darwin-arm64', 'darwin-x64', 'linux-x64', 'linux-arm64', 'win32-x64')
+TARGETS = ('linux-x64', 'win32-x64')
 DISTROS = ('ubuntu-24.04', 'fedora-44', 'arch')
 
 
@@ -42,14 +41,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='release-', dir=ROOT / 'dist') as temporary:
         stage = pathlib.Path(temporary) / name
         stage.mkdir()
-        if args.target.startswith('darwin-'):
-            app = ROOT / 'dist/TunnelNest Rust.app'
-            if not app.is_dir():
-                parser.error('Build the native macOS app before packaging')
-            shutil.copytree(app, stage / app.name, symlinks=True)
-            shutil.copy2(runtime / 'core-manifest.json', stage / 'core-manifest.json')
-        else:
-            shutil.copytree(runtime, stage, dirs_exist_ok=True, symlinks=True)
+        shutil.copytree(runtime, stage, dirs_exist_ok=True, symlinks=True)
         shutil.copy2(ROOT / 'README.md', stage / 'README.md')
         if args.target.startswith('linux-'):
             commands = {
@@ -63,8 +55,6 @@ def main():
                 launch += 'Install runtime dependencies: ' + commands[args.distro] + '\n'
             if args.distro == 'arch':
                 launch += 'Arch is rolling; update the system before running this build.\n'
-        elif args.target.startswith('darwin-'):
-            launch = 'macOS: open TunnelNest Rust.app.\n'
         else:
             launch = 'Windows: open tunnel.exe (requires Microsoft WebView2 Runtime).\n'
         (stage / 'RUN.txt').write_text(
@@ -77,10 +67,6 @@ def main():
             archive = output / (name + '.tar.gz')
             with tarfile.open(archive, 'w:gz') as tar:
                 tar.add(stage, arcname=name)
-        elif args.target.startswith('darwin-'):
-            archive = output / (name + '.zip')
-            subprocess.run(['ditto', '-c', '-k', '--sequesterRsrc', '--keepParent',
-                            str(stage), str(archive)], check=True)
         else:
             archive = pathlib.Path(shutil.make_archive(str(output / name), 'zip',
                                                       temporary, name))

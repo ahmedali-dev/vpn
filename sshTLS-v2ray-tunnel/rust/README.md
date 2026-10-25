@@ -34,12 +34,12 @@ Xray and sing-box remain external networking cores, as in the Go app. Place them
 Build the native engine into the expected desktop runtime layout:
 
 ```sh
-TUNNEL_PACKAGE_TARGET=darwin-arm64 python3 scripts/fetch-cores.py
+TUNNEL_PACKAGE_TARGET=linux-x64 python3 scripts/fetch-cores.py
 python3 scripts/build.py
-./dist/runtime/darwin-arm64/tunnel --desktop
+./dist/runtime/linux-x64/tunnel --desktop
 ```
 
-Use the matching platform key: `darwin-arm64`, `darwin-x64`, `linux-x64`, `linux-arm64`, or `win32-x64`. On macOS the script also creates `dist/TunnelNest Rust.app`, including any fetched cores. The build script builds for its host platform; run it on each matching release runner. Set `TUNNELNEST_CLI_ONLY=1` to omit the native window. The fetch script retains the original pinned versions and verifies the official release SHA-256 metadata.
+Release scripts support only `linux-x64` (Ubuntu, Fedora, Arch) and `win32-x64` (Windows), on matching x86_64/AMD64 hosts. macOS, ARM64, and 32-bit builds are excluded. Source development on other platforms remains available through Cargo directly. Set `TUNNELNEST_CLI_ONLY=1` to omit the native window. The fetch script retains the original pinned versions and verifies the official release SHA-256 metadata.
 
 ## Behavior
 
@@ -55,7 +55,7 @@ Use the matching platform key: `darwin-arm64`, `darwin-x64`, `linux-x64`, `linux
 
 The Tauri configuration lives in `tauri.conf.json`; `build.rs` generates permissions for exactly three application commands. The bundled `main` window can request allowlisted control operations, start the existing administrator helper, and save validated profile/QR exports. Remote web pages receive no capabilities, external navigation and popups are blocked, and a content security policy limits resources to bundled assets and Tauri IPC. The control token remains in Rust and is never placed in the desktop URL or frontend storage. CLI/browser mode retains its authenticated loopback API. Window close and application quit wait for the control service to stop its tunnel/helper before exiting.
 
-`python3 scripts/build.py` continues to use Cargo directly with the Tauri desktop feature; DEB, RPM, Arch x86_64/aarch64, and Windows portable packaging continue to include cores beside the executable. There is no Tauri JavaScript CLI dependency. `cargo build --release --locked` without `--features desktop` remains the CLI-only build.
+`python3 scripts/build.py` continues to use Cargo directly with the Tauri desktop feature; DEB, RPM, Arch x86_64, and Windows portable packaging continue to include cores beside the executable. There is no Tauri JavaScript CLI dependency. `cargo build --release --locked` without `--features desktop` remains the CLI-only build.
 
 The optional Electron shell is kept in `desktop/` for compatibility. It runs the Rust binary from this folder's `dist/runtime/`. Use Node 22.12+ and `npm ci --prefix desktop`, then `npm start --prefix desktop`. The native Rust window needs neither npm nor Electron.
 
@@ -77,7 +77,7 @@ Live third-party VPN connections, native authorization prompts, and actual route
 
 ### Build Windows, DEB, RPM, and Arch packages without publishing
 
-GitHub Actions builds Windows x64 (`.zip` containing `tunnel.exe`), Ubuntu 24.04 x64/ARM64 (`.deb`), Fedora 44 x64 (`.rpm`), and Arch Linux x64/ARM64 (`.pkg.tar.zst`). Portable Linux `.tar.gz` files are retained. The package installs a `tunnelnest` launcher, application-menu entry, icon, and networking cores. macOS is excluded from CI builds.
+GitHub Actions builds Windows x64 (`.zip` containing `tunnel.exe`), Ubuntu 24.04 x64 (`.deb`), Fedora 44 x64 (`.rpm`), and Arch Linux x64 (`.pkg.tar.zst`). Portable Linux `.tar.gz` files are retained. The package installs a `tunnelnest` launcher, application-menu entry, icon, and networking cores. macOS is excluded from CI builds.
 
 You can trigger all platforms from a Mac. Install GitHub CLI and authenticate, then install the workflow at the actual repository root:
 
@@ -103,7 +103,7 @@ Manual runs use the version already selected in Cargo.toml and build downloadabl
 To build a Linux package locally, use the matching Linux distro and architecture with Rust, Python 3, GTK 3/WebKitGTK 4.1/OpenSSL development libraries, and its native package tools installed. From `rust/`:
 
 ```sh
-# Ubuntu 24.04 x64; use linux-arm64 on ARM64 Ubuntu.
+# Ubuntu 24.04 x64 (x86_64/AMD64 only).
 export OPENSSL_STATIC=0 TUNNEL_PACKAGE_TARGET=linux-x64
 python3 scripts/fetch-cores.py
 python3 scripts/build.py
@@ -134,14 +134,14 @@ If this project has no Git repository, the script initializes one. If there is n
 
 The script stages the project, shows the actual changes, and asks before committing and pushing. Cancellation leaves the local version changes staged. After confirmation, it commits, creates a `rust-vX.Y.Z` tag, and atomically pushes the branch and tag. Existing local/remote tags are refused; pushes are never forced. Build outputs and dependencies remain excluded by the existing `.gitignore` files.
 
-The root `.github/workflows/rust-release.yml` reacts to `rust-v*` tags. It checks the version, installs dependencies, downloads verified cores, runs the Rust and interface tests, and builds Ubuntu 24.04 x64/ARM64, Fedora 44 x64, Arch Linux x64/ARM64, and Windows x64. The four Linux jobs compile inside Ubuntu, Fedora, or Arch containers with their own native development libraries. macOS is excluded from the release workflow. Runner labels follow [GitHub's hosted runner reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners). Private repositories use your account's Actions minutes.
+The root `.github/workflows/rust-release.yml` reacts to `rust-v*` tags. It checks the version, installs dependencies, downloads verified cores, runs the Rust and interface tests, and builds Ubuntu 24.04 x64, Fedora 44 x64, Arch Linux x64, and Windows x64. The three Linux jobs compile inside Ubuntu, Fedora, or Arch containers with their own native development libraries. macOS is excluded from the release workflow. Runner labels follow [GitHub's hosted runner reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners). Private repositories use your account's Actions minutes.
 
-Only after all six builds succeed for a tag push does the publish job create a draft release, upload the five native Linux packages, six portable archives and `SHA256SUMS.txt`, and publish it. Manual runs skip publication. Failed uploads leave a draft that a workflow rerun can resume; already published releases are never overwritten. Optional release notes belong in `release-notes/rust-vX.Y.Z.md`. Otherwise the workflow generates brief runtime instructions. Linux packages use their distribution's OpenSSL, GTK 3, WebKitGTK 4.1, and D-Bus libraries. Arch targets the rolling release at build time. All packages and archives include the required networking cores and their license files.
+Only after all four builds succeed for a tag push does the publish job create a draft release, upload the three native Linux packages, four portable archives and `SHA256SUMS.txt`, and publish it. Manual runs skip publication. Failed uploads leave a draft that a workflow rerun can resume; already published releases are never overwritten. Optional release notes belong in `release-notes/rust-vX.Y.Z.md`. Otherwise the workflow generates brief runtime instructions. Linux packages use their distribution's OpenSSL, GTK 3, WebKitGTK 4.1, and D-Bus libraries. Arch targets the rolling release at build time. All packages and archives include the required networking cores and their license files.
 
 The versioning, build, packaging, push, and release steps run only when you explicitly execute the script and approve its prompt. Remote Actions execution and all platform builds must still be verified on your GitHub repository.
 
 
-Linux release builds use Ubuntu 24.04 (x64 and ARM64), Fedora 44 (x64), and official Arch Linux (x64). The Ubuntu ARM64 build is retained; Fedora release artifacts are x64; Arch packages support x86_64 and aarch64. The workflow uses Fedora's `webkit2gtk4.1-devel` and Arch's `webkit2gtk-4.1` packages; see the [Fedora package](https://packages.fedoraproject.org/pkgs/webkitgtk/webkit2gtk4.1-devel/) and [Arch package](https://archlinux.org/packages/extra/x86_64/webkit2gtk-4.1/) for native dependency details. The existing macOS source/local build support remains available, but produces no macOS release assets in GitHub Actions.
+Linux release builds use Ubuntu 24.04, Fedora 44, and official Arch Linux containers, all on x86_64 runners. Windows uses an x64 runner. No ARM64, 32-bit, or macOS release assets are built. The workflow uses Fedora's `webkit2gtk4.1-devel` and Arch's `webkit2gtk-4.1` development packages. Packaging verifies that the app, Xray, and sing-box match the selected architecture.
 
 ## Saved connection logs
 
@@ -153,4 +153,5 @@ Files live under the normal user's configuration directory at `TunnelNestRust/lo
 
 Known connection passwords, protocol credentials/share links, proxy credentials, authorization headers, and control tokens are redacted before reaching the activity panel or disk. Logs retain server and forwarding destination addresses for troubleshooting. The authenticated log API only lists/reads bounded log files from this directory; arbitrary paths and symlinks are rejected.
 
-For Arch Linux ARM, download `tunnelnest-rust-VERSION-1-aarch64.pkg.tar.zst` and install with `sudo pacman -U ./tunnelnest-rust-VERSION-1-aarch64.pkg.tar.zst`. Check `uname -m` before downloading: `x86_64` and `aarch64` packages are not interchangeable. The Arch ARM64 CI job uses a digest-pinned [Menci Arch Linux ARM container](https://github.com/Menci/docker-archlinuxarm) on an ARM64 runner. Packaging verifies that the app, Xray, and sing-box are all ELF executables for the selected architecture.
+
+Arch release packages use `x86_64`. ARM64 (`aarch64`) machines cannot install these packages; use a compatible ARM64 build from an earlier release/run or build from source with Cargo and matching networking cores.

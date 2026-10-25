@@ -28,10 +28,6 @@ jobs:
             target: linux-x64
             runner: ubuntu-24.04
             image: ubuntu:24.04
-          - distro: ubuntu-24.04
-            target: linux-arm64
-            runner: ubuntu-24.04-arm
-            image: ubuntu:24.04
           - distro: fedora-44
             target: linux-x64
             runner: ubuntu-24.04
@@ -40,12 +36,6 @@ jobs:
             target: linux-x64
             runner: ubuntu-24.04
             image: archlinux:base-devel
-          - distro: arch
-            target: linux-arm64
-            runner: ubuntu-24.04-arm
-            # Arch's official image is amd64-only. This community image
-            # bootstraps Arch Linux ARM; pin the verified arm64 manifest.
-            image: menci/archlinuxarm@sha256:743b09f85839b1d6dcc62bbb3953ff08cd3fad583b8f100495cc199a80fcf1ef
     defaults:
       run:
         shell: bash
@@ -75,13 +65,7 @@ jobs:
               dnf install -y git curl-minimal ca-certificates python3 gcc gcc-c++ make perl pkgconf-pkg-config openssl-devel dbus-devel gtk3-devel webkit2gtk4.1-devel tar gzip unzip which rpm-build desktop-file-utils
               ;;
             arch)
-              pacman_options=()
-              if [[ "$TUNNEL_PACKAGE_TARGET" == linux-arm64 ]]; then
-                # The hosted ARM container cannot apply pacman's Landlock
-                # downloader sandbox. Package-signature checks remain enabled.
-                pacman_options+=(--disable-sandbox)
-              fi
-              pacman "${pacman_options[@]}" -Syu --noconfirm --needed git curl ca-certificates python base-devel pkgconf openssl dbus gtk3 webkit2gtk-4.1 tar gzip unzip which desktop-file-utils
+              pacman -Syu --noconfirm --needed git curl ca-certificates python base-devel pkgconf openssl dbus gtk3 webkit2gtk-4.1 tar gzip unzip which desktop-file-utils
               ;;
             *) echo "Unsupported distribution: $DISTRO" >&2; exit 1 ;;
           esac
@@ -134,9 +118,7 @@ jobs:
             ubuntu-24.04) apt-get install -y ./dist/release/*.deb ;;
             fedora-44) dnf install -y ./dist/release/*.rpm ;;
             arch)
-              pacman_options=()
-              if [[ "$TUNNEL_PACKAGE_TARGET" == linux-arm64 ]]; then pacman_options+=(--disable-sandbox); fi
-              pacman "${pacman_options[@]}" -U --noconfirm ./dist/release/*.pkg.tar.zst
+              pacman -U --noconfirm ./dist/release/*.pkg.tar.zst
               ;;
           esac
           desktop-file-validate /usr/share/applications/org.tunnelnest.rust.desktop
@@ -241,7 +223,7 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
           checksums=(*.sha256)
-          test "${#checksums[@]}" -eq 11
+          test "${#checksums[@]}" -eq 7
           for checksum in "${checksums[@]}"; do sha256sum --check "$checksum"; done
           cat "${checksums[@]}" > SHA256SUMS.txt
           rm -- "${checksums[@]}"
@@ -256,7 +238,7 @@ jobs:
             cat > "$notes" <<NOTES
           TunnelNest Rust $version
 
-          Native Rust desktop and CLI builds: Windows x64 ZIP, Ubuntu 24.04 x64/ARM64 DEB, Fedora 44 x64 RPM, and Arch Linux x64/ARM64 pkg.tar.zst. Portable Linux tarballs are also included. Every package includes Xray and sing-box plus their licenses. Verify downloads against SHA256SUMS.txt. Match x86_64 packages to x86_64 machines and aarch64 packages to ARM64 machines.
+          Native Rust desktop and CLI builds: Windows x64 ZIP, Ubuntu 24.04 x64 DEB, Fedora 44 x64 RPM, and Arch Linux x64 pkg.tar.zst. Portable Linux tarballs are also included. Every package includes Xray and sing-box plus their licenses. Verify downloads against SHA256SUMS.txt. All builds require an x86_64/AMD64 machine; ARM64 and 32-bit systems are excluded.
 
           Builds are unsigned. Windows requires WebView2. Each Linux archive is built inside its named distribution and needs that distribution's GTK 3, WebKitGTK 4.1, OpenSSL, and D-Bus runtime libraries. Arch builds target the rolling release at build time. Live VPN connections, native authorization, and actual TUN routing require platform testing. Existing Go profiles can be transferred using shared profile codes/files.
           NOTES

@@ -5,12 +5,13 @@ import pathlib
 import platform
 import shutil
 import subprocess
-from version import package_version
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-version = package_version((ROOT / 'Cargo.toml').read_text())
-system = {'Darwin': 'darwin', 'Linux': 'linux', 'Windows': 'win32'}[platform.system()]
-arch = {'aarch64': 'arm64', 'arm64': 'arm64', 'x86_64': 'x64', 'AMD64': 'x64'}[platform.machine()]
+system = {'Linux': 'linux', 'Windows': 'win32'}.get(platform.system())
+if system is None or platform.machine().lower() not in ('x86_64', 'amd64'):
+    raise SystemExit('Release builds require x86_64 Windows or Linux (Ubuntu, Fedora, or Arch). '
+                     'Run this script on the matching native runner; macOS, ARM64, and 32-bit hosts are unsupported.')
+arch = 'x64'
 key = f'{system}-{arch}'
 requested = os.environ.get('TUNNEL_PACKAGE_TARGET', key)
 if requested != key:
@@ -27,30 +28,3 @@ runtime = ROOT / 'dist' / 'runtime' / key
 runtime.mkdir(parents=True, exist_ok=True)
 shutil.copy2(target_dir / 'release' / name, runtime / name)
 print(f'Built {runtime / name}')
-
-# A native macOS app bundle can be launched directly from Finder.
-if system == 'darwin' and os.environ.get('TUNNELNEST_CLI_ONLY') != '1':
-    import plistlib
-    bundle = ROOT / 'dist' / 'TunnelNest Rust.app'
-    contents = bundle / 'Contents'
-    macos = contents / 'MacOS'
-    resources = contents / 'Resources'
-    macos.mkdir(parents=True, exist_ok=True)
-    resources.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(runtime / name, macos / name)
-    if (runtime / 'cores').exists():
-        shutil.copytree(runtime / 'cores', macos / 'cores', dirs_exist_ok=True)
-    shutil.copy2(ROOT / 'desktop/assets/tunnelnest.icns', resources / 'tunnelnest.icns')
-    (contents / 'Info.plist').write_bytes(plistlib.dumps({
-        'CFBundleName': 'TunnelNest Rust',
-        'CFBundleDisplayName': 'TunnelNest Rust',
-        'CFBundleIdentifier': 'org.tunnelnest.rust',
-        'CFBundleExecutable': name,
-        'CFBundleIconFile': 'tunnelnest.icns',
-        'CFBundlePackageType': 'APPL',
-        'CFBundleShortVersionString': version,
-        'CFBundleVersion': version,
-        'NSHighResolutionCapable': True,
-        'LSMinimumSystemVersion': '11.0',
-    }))
-    print(f'Built {bundle}')
