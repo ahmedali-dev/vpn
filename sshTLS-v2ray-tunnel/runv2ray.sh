@@ -1,4 +1,0 @@
-./tunnel -mode v2ray \
-  -v2ray-link "vmess://eyJhZGQiOiJkZS12MnJheS5mcmVldm1lc3MuY29tIiwiYWlkIjoiMCIsInNjeSI6ImF1dG8iLCJob3N0IjoiIiwiaWQiOiJiYmRjZTQ1MS00NTcwLTQ2YWItOTY0ZC0zZmFmZWE1Zjg4NGMiLCJuZXQiOiJ0Y3AiLCJwYXRoIjoiIiwicG9ydCI6IjIwODMiLCJwcyI6ImRlLXYycmF5LmZyZWV2bWVzcy5jb20taTdiaTgwOWIiLCJ0bHMiOiJ0bHMiLCJzbmkiOiJXZWIud2hhdHNhcHAuY29tIiwidHlwZSI6Im5vbmUiLCJmcCI6ImNocm9tZSIsInYiOiIyIn0=" \
-  -pac-port 8080
-

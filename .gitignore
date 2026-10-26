@@ -31,3 +31,6 @@ Desktop.ini
 
 # Standalone Windows executable
 /vpn.exe
+
+# Local verified legacy archives; may include private settings and logs
+/archives/

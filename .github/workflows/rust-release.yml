@@ -39,7 +39,7 @@ jobs:
     defaults:
       run:
         shell: bash
-        working-directory: "sshTLS-v2ray-tunnel/rust"
+        working-directory: rust
     env:
       CARGO_TERM_COLOR: always
       CARGO_HOME: /opt/tunnelnest/cargo
@@ -128,7 +128,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: rust-${{ matrix.distro }}-${{ matrix.target }}
-          path: "sshTLS-v2ray-tunnel/rust/dist/release/*"
+          path: rust/dist/release/*
           if-no-files-found: error
           retention-days: 14
 
@@ -139,7 +139,7 @@ jobs:
     defaults:
       run:
         shell: bash
-        working-directory: "sshTLS-v2ray-tunnel/rust"
+        working-directory: rust
     env:
       CARGO_TERM_COLOR: always
       TUNNEL_PACKAGE_TARGET: win32-x64
@@ -196,7 +196,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: rust-win32-x64
-          path: "sshTLS-v2ray-tunnel/rust/dist/release/*"
+          path: rust/dist/release/*
           if-no-files-found: error
           retention-days: 14
 
@@ -232,7 +232,7 @@ jobs:
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#rust-v}"
-          notes="sshTLS-v2ray-tunnel/release-notes/${GITHUB_REF_NAME}.md"
+          notes="release-notes/${GITHUB_REF_NAME}.md"
           if [[ ! -f "$notes" ]]; then
             notes="$RUNNER_TEMP/rust-release-notes.md"
             cat > "$notes" <<NOTES

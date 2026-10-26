@@ -1,6 +1,8 @@
-# TunnelNest — Rust port
+# TunnelNest — Rust desktop
 
-A separate Rust implementation of the tunnel engine, local control service, and native desktop window. The existing HTML/CSS/JavaScript interface is embedded into the Rust binary. The native desktop shell uses Tauri 2 and the operating system webview; the previous direct Wry/Tao shell has been replaced. Electron remains optional. No Go executable or Go toolchain is needed to run or build this port.
+A Rust implementation of the tunnel engine, local control service, and native desktop window. The existing HTML/CSS/JavaScript interface is embedded into the Rust binary. The native desktop shell uses Tauri 2 and the operating system webview; the previous direct Wry/Tao shell has been replaced. Electron remains optional. No Go executable or Go toolchain is needed to run or build this port.
+
+The project now lives in `rust/` directly under the Git repository root. Commands using `rust/scripts/` run from that root. Older source is kept in local archives described in the root README.
 
 ## Build and run
 
