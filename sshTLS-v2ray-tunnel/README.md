@@ -1,5 +1,5 @@
 # Project moved
 
-The active application is now in `../rust/`. Run commands from the repository root, `..`.
+The active application is now directly in the repository root, `../`, with `Cargo.toml`, `src/`, `desktop/`, and `scripts/`.
 
-Older source files from this folder are saved in `../archives/sshTLS-legacy-20261026.tar.gz`. Generated builds were removed.
+Older source files are preserved in `../archives/sshTLS-legacy-20261026.tar.gz`.

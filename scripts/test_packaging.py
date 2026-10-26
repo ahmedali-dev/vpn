@@ -117,11 +117,11 @@ class PackagingTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location('installer', pathlib.Path(__file__).with_name('install-workflow.py'))
         installer = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(installer)
-        source = (pathlib.Path(__file__).resolve().parents[2] / '.github/workflows/rust-release.yml').read_text()
+        source = (pathlib.Path(__file__).resolve().parents[1] / '.github/workflows/rust-release.yml').read_text()
         nested = installer.render(source, 'apps/Tunnel Nest')
-        self.assertNotIn('working-directory: rust', nested)
-        self.assertNotIn('path: rust/dist/release/*', nested)
-        self.assertIn('working-directory: "apps/Tunnel Nest/rust"', nested)
+        self.assertNotIn('working-directory: .', nested)
+        self.assertNotIn('path: dist/release/*', nested)
+        self.assertIn('working-directory: "apps/Tunnel Nest"', nested)
         self.assertEqual(installer.render(source, ''), source)
 
     @unittest.skipUnless(sys.platform == 'linux' and os.environ.get('TUNNELNEST_TEST_DISTRO'),

@@ -5,11 +5,11 @@ set -euo pipefail
 RELEASE_VERSION="${RELEASE_VERSION:-}"
 REPOSITORY=""
 VISIBILITY="private"
-ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 
 usage() {
   cat <<'HELP'
-Usage: bash rust/scripts/release.sh [--version X.Y.Z] [--repo OWNER/REPO]
+Usage: bash scripts/release.sh [--version X.Y.Z] [--repo OWNER/REPO]
                                     [--visibility private|public]
 
 Prompts for the version before changing files or starting any build.
@@ -21,7 +21,7 @@ then publishes a release. Only x86_64/AMD64 is built; macOS, ARM64,
 and 32-bit builds are excluded.
 
 First use without a Git repository or origin:
-  bash rust/scripts/release.sh --version 1.3.1 --repo YOUR_NAME/YOUR_REPO
+  bash scripts/release.sh --version 1.3.1 --repo YOUR_NAME/YOUR_REPO
 
 An absent repository is created private unless --visibility public is supplied.
 Existing origins are preserved. Requires git, gh, Python 3, Git identity,
@@ -55,7 +55,7 @@ RELEASE_VERSION="${RELEASE_VERSION#v}"
 [[ "$RELEASE_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || fail 'Use a version such as 1.3.1 (no prerelease suffix).'
 TAG="rust-v$RELEASE_VERSION"
 cd -- "$ROOT"
-[[ -f .github/workflows/rust-release.yml && -f rust/Cargo.toml ]] || fail 'Run this script from the full TunnelNest source checkout.'
+[[ -f .github/workflows/rust-release.yml && -f Cargo.toml ]] || fail 'Run this script from the full TunnelNest source checkout.'
 gh auth status >/dev/null 2>&1 || fail 'Run gh auth login first (include workflow permissions).'
 
 if git rev-parse --show-toplevel >/dev/null 2>&1; then
@@ -85,7 +85,7 @@ fi
 REMOTE_TAG="$(git_auth ls-remote --tags origin "refs/tags/$TAG")" || fail 'Cannot read remote tags.'
 [[ -z "$REMOTE_TAG" ]] || fail "Remote tag $TAG already exists. Choose a new version."
 # Preflight visibility/version mismatches before changing the checked-out version.
-python3 rust/scripts/version.py "$RELEASE_VERSION"
+python3 scripts/version.py "$RELEASE_VERSION"
 
 # The preview includes the actual version updates. Nothing is committed or pushed
 # until the person running this script approves the staged file list.

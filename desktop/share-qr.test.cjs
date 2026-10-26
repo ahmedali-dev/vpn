@@ -1,6 +1,6 @@
 'use strict';
 const test=require('node:test');const assert=require('node:assert/strict');
-const {matrix}=require('./ui/share-qr.js');const readQR=require('jsqr');
+const {matrix}=require('./ui/share-qr.js');const readQR=require('./ui/qr-reader.js');
 test('generated QR codes scan back into the original protected and open codes',()=>{
  for(const code of ['TN2.'+'aB9_-'.repeat(28),'TN2P.'+'7XbA_-'.repeat(50),'TN1.'+'abcdef123'.repeat(40)]){
   const grid=matrix(code),scale=5,quiet=4,size=(grid.length+quiet*2)*scale,pixels=new Uint8ClampedArray(size*size*4).fill(255);

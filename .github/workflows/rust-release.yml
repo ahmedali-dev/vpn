@@ -39,7 +39,7 @@ jobs:
     defaults:
       run:
         shell: bash
-        working-directory: rust
+        working-directory: .
     env:
       CARGO_TERM_COLOR: always
       CARGO_HOME: /opt/tunnelnest/cargo
@@ -128,7 +128,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: rust-${{ matrix.distro }}-${{ matrix.target }}
-          path: rust/dist/release/*
+          path: dist/release/*
           if-no-files-found: error
           retention-days: 14
 
@@ -139,7 +139,7 @@ jobs:
     defaults:
       run:
         shell: bash
-        working-directory: rust
+        working-directory: .
     env:
       CARGO_TERM_COLOR: always
       TUNNEL_PACKAGE_TARGET: win32-x64
@@ -196,7 +196,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: rust-win32-x64
-          path: rust/dist/release/*
+          path: dist/release/*
           if-no-files-found: error
           retention-days: 14
 

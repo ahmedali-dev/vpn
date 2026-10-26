@@ -5,15 +5,15 @@ import json
 import pathlib
 import subprocess
 
-PROJECT = pathlib.Path(__file__).resolve().parents[2]
+PROJECT = pathlib.Path(__file__).resolve().parents[1]
 
 
 def render(source, prefix):
     if prefix:
-        source = source.replace('working-directory: rust',
-                                'working-directory: ' + json.dumps(prefix + '/rust'))
-        source = source.replace('path: rust/dist/release/*',
-                                'path: ' + json.dumps(prefix + '/rust/dist/release/*'))
+        source = source.replace('working-directory: .',
+                                'working-directory: ' + json.dumps(prefix))
+        source = source.replace('path: dist/release/*',
+                                'path: ' + json.dumps(prefix + '/dist/release/*'))
         source = source.replace('notes="release-notes/', 'notes="' + prefix + '/release-notes/')
     return source
 
