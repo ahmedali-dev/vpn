@@ -415,7 +415,7 @@ async fn api(c: Arc<Control>, path: &str, req: Request) -> Result<Value> {
         "/api/diagnostics" => {
             let s = c.status().await?;
             return Ok(
-                json!({"engine":"rust","version":env!("CARGO_PKG_VERSION"),"platform":std::env::consts::OS,"arch":std::env::consts::ARCH,"state":s["state"],"administrator":is_admin()}),
+                json!({"engine":"rust","version":env!("CARGO_PKG_VERSION"),"platform":std::env::consts::OS,"arch":std::env::consts::ARCH,"state":s["state"],"health":s["health"],"recovery":s["recovery"],"administrator":is_admin()}),
             );
         }
         "/api/vault/status" => {

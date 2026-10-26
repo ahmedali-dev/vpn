@@ -3,6 +3,7 @@ pub mod control;
 pub mod core;
 mod hostname;
 pub mod logging;
+pub mod recovery;
 pub mod runtime;
 pub mod sharing;
 pub mod store;

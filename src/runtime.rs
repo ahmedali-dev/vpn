@@ -2,6 +2,7 @@ use crate::{
     config::{Config, parse_proxy},
     core::{CoreProcess, find_core, tun_config, xray_config},
     logging::{self, Redactor, SessionFile},
+    recovery::{HealthGate, RetryPolicy, permanent},
     transport::{self, HostVerifier},
 };
 use anyhow::{Context, Result, bail, ensure};
@@ -26,6 +27,7 @@ pub struct Status {
     pub logs: String,
     pub connection: Value,
     pub health: Value,
+    pub recovery: Value,
     pub log_error: String,
     pub log_file: Option<SessionFile>,
     pub redactor: Redactor,
@@ -122,9 +124,72 @@ impl Reporter {
         self.0.lock().unwrap().health =
             json!({"state":state,"error":error,"lastCheck":chrono::Utc::now().to_rfc3339()});
     }
+    pub(crate) async fn stage<T>(
+        &self,
+        name: &str,
+        work: impl std::future::Future<Output = Result<T>>,
+    ) -> Result<T> {
+        let start = std::time::Instant::now();
+        self.event("INFO", "STAGE", format!("{name} started"));
+        let result = work.await;
+        let elapsed = start.elapsed().as_millis() as u64;
+        self.event(
+            if result.is_ok() { "INFO" } else { "WARN" },
+            "STAGE",
+            format!(
+                "{name} {} after {elapsed}ms",
+                if result.is_ok() {
+                    "completed"
+                } else {
+                    "failed"
+                }
+            ),
+        );
+        let mut status = self.0.lock().unwrap();
+        if !status.recovery.is_object() {
+            status.recovery = json!({});
+        }
+        status.recovery["lastStage"] =
+            json!({"name":name,"durationMs":elapsed,"success":result.is_ok()});
+        result
+    }
+    fn connected(&self) {
+        let now = chrono::Utc::now();
+        let (startup_ms, recovery_ms) = {
+            let mut status = self.0.lock().unwrap();
+            let elapsed = |key: &str| {
+                status.recovery[key]
+                    .as_str()
+                    .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                    .map(|at| {
+                        (now - at.with_timezone(&chrono::Utc))
+                            .num_milliseconds()
+                            .max(0)
+                    })
+            };
+            let startup = elapsed("attemptStartedAt");
+            let recovery = elapsed("recoveryStartedAt");
+            status.recovery["startupMs"] = json!(startup);
+            status.recovery["recoveryMs"] = json!(recovery);
+            status.recovery["recoveryStartedAt"] = Value::Null;
+            status.recovery["nextRetryAt"] = Value::Null;
+            (startup, recovery)
+        };
+        self.event(
+            "INFO",
+            "CONNECT",
+            format!(
+                "Connection verified; startup={}ms; recovery={}ms",
+                startup_ms.unwrap_or(0),
+                recovery_ms.unwrap_or(0)
+            ),
+        );
+        self.state("connected");
+        self.health("healthy", "");
+    }
     pub fn snapshot(&self) -> Value {
         let s = self.0.lock().unwrap();
-        json!({"state":s.state,"error":s.error,"logs":s.logs,"connection":s.connection,"health":s.health,"administrator":is_admin(),"logFile":s.log_file.as_ref().map(|f|f.path.file_name().unwrap_or_default().to_string_lossy()),"logError":s.log_error})
+        json!({"state":s.state,"error":s.error,"logs":s.logs,"connection":s.connection,"health":s.health,"recovery":s.recovery,"administrator":is_admin(),"logFile":s.log_file.as_ref().map(|f|f.path.file_name().unwrap_or_default().to_string_lossy()),"logError":s.log_error})
     }
 }
 pub fn is_admin() -> bool {
@@ -162,12 +227,19 @@ impl Session {
         let r = report.clone();
         let task = tokio::spawn(async move {
             let result = run(config, c.clone(), r.clone()).await;
+            {
+                let mut status = r.0.lock().unwrap();
+                if status.recovery.is_object() {
+                    status.recovery["nextRetryAt"] = Value::Null;
+                }
+            }
             if c.is_cancelled() {
                 r.state("disconnected");
                 r.health("disconnected", "");
             } else if let Err(e) = result {
                 let message = r.clean(&format!("{e:#}"));
                 r.event("ERROR", "SESSION", &message);
+                r.health("failed", &message);
                 let mut s = r.0.lock().unwrap();
                 s.error = message;
                 s.state = "error".into();
@@ -277,9 +349,6 @@ async fn run(mut c: Config, cancel: CancellationToken, r: Reporter) -> Result<()
         !c.tun() || is_admin(),
         "full-device TUN requires the administrator helper"
     );
-    let excluded = prepare(&mut c, &r)
-        .await
-        .context("upstream DNS preparation failed")?;
     let (host, port, sni, setting, ca) = if c.mode() == "ssh" {
         (
             c.get("H", "").to_string(),
@@ -321,64 +390,122 @@ async fn run(mut c: Config, cancel: CancellationToken, r: Reporter) -> Result<()
     // Explicit compatibility pins survive restarts for this connection session only.
     let mut compatibility_pin = None;
     let tofu_key = Arc::new(Mutex::new(None));
-    for attempt in 0..=5 {
+    let mut retries = RetryPolicy::default();
+    let mut attempt = 0u64;
+    loop {
         if cancel.is_cancelled() {
             return Ok(());
         }
-        r.state(if attempt == 0 {
+        attempt += 1;
+        let started = std::time::Instant::now();
+        let mut connected_for = Duration::ZERO;
+        r.state(if attempt == 1 {
             "connecting"
         } else {
             "reconnecting"
         });
+        r.health("connecting", "");
+        {
+            let mut status = r.0.lock().unwrap();
+            if !status.recovery.is_object() {
+                status.recovery = json!({});
+            }
+            status.recovery["attempt"] = json!(attempt);
+            status.recovery["attemptStartedAt"] = json!(chrono::Utc::now().to_rfc3339());
+            status.recovery["consecutiveFailures"] = json!(retries.failures());
+            status.recovery["nextRetryAt"] = Value::Null;
+        }
         r.event(
             "INFO",
             "CONNECT",
             format!(
-                "Attempt {}/6; server={host}:{port}; SNI={sni}; TLS={}; certificate mode={setting}",
-                attempt + 1,
-                c.get("tls-version", "auto")
+                "Attempt {attempt}; server={host}:{port}; SNI={sni}; certificate mode={setting}"
             ),
         );
-        let pin = tokio::select! {
-            _=cancel.cancelled()=>return Ok(()),
-            p=transport::resolve_pin(&host,port,&sni,&setting,&ca,c.get("tls-version","auto")),if !(setting=="insecure" && compatibility_pin.is_some())=>p.context("TLS certificate discovery/verification failed")?,
-            p=async {compatibility_pin.clone()},if setting=="insecure" && compatibility_pin.is_some()=>p,
-        };
-        if setting == "insecure" {
-            compatibility_pin = pin.clone();
-        }
-        let result = run_once(
-            &c,
-            &excluded,
-            pin.as_deref(),
-            cancel.clone(),
-            r.clone(),
-            tofu_key.clone(),
-        )
-        .await;
+        let result: Result<()> = async {
+            let excluded = tokio::select! {
+                _ = cancel.cancelled() => return Ok(()),
+                value = r.stage("DNS preparation", prepare(&mut c, &r)) => value.context("upstream DNS preparation failed")?,
+            };
+            let pin = if setting == "insecure" && compatibility_pin.is_some() {
+                compatibility_pin.clone()
+            } else {
+                tokio::select! {
+                    _ = cancel.cancelled() => return Ok(()),
+                    value = r.stage("TLS discovery", async { tokio::time::timeout(Duration::from_secs(45), transport::resolve_pin(&host,port,&sni,&setting,&ca,c.get("tls-version","auto"))).await.context("TLS discovery timed out after 45s")? }) => value.context("TLS certificate discovery/verification failed")?,
+                }
+            };
+            if setting == "insecure" { compatibility_pin = pin.clone(); }
+            run_once(&c, &excluded, pin.as_deref(), cancel.clone(), r.clone(), tofu_key.clone(), &mut connected_for).await
+        }.await;
         if cancel.is_cancelled() {
             return Ok(());
         }
-        match result {
+        let error = match result {
             Ok(()) => return Ok(()),
-            Err(e) => {
-                r.health("degraded", &e.to_string());
-                r.event(
-                    "ERROR",
-                    "CONNECT",
-                    format!("Attempt {} failed: {e:#}", attempt + 1),
-                );
-                if attempt == 5 {
-                    return Err(e);
-                }
+            Err(error) => error,
+        };
+        let connected = connected_for;
+        r.health("degraded", &error.to_string());
+        r.event(
+            "ERROR",
+            "CONNECT",
+            format!(
+                "Attempt {attempt} failed after {}ms; connected={}ms: {error:#}",
+                started.elapsed().as_millis(),
+                connected.as_millis()
+            ),
+        );
+        let terminal = permanent(&error);
+        let delay = if terminal {
+            None
+        } else {
+            retries.failed(connected, rand::random::<f64>())
+        };
+        {
+            let mut status = r.0.lock().unwrap();
+            let reason: String = status
+                .redactor
+                .clean(&format!("{error:#}"))
+                .chars()
+                .take(4000)
+                .collect();
+            status.recovery["lastFailure"] =
+                json!({"reason":reason,"terminal":terminal,"at":chrono::Utc::now().to_rfc3339()});
+            status.recovery["consecutiveFailures"] = json!(retries.failures());
+            if status.recovery["recoveryStartedAt"].is_null() {
+                status.recovery["recoveryStartedAt"] = json!(chrono::Utc::now().to_rfc3339());
             }
+            status.recovery["nextRetryAt"] = json!(delay.map(|d| {
+                (chrono::Utc::now() + chrono::Duration::milliseconds(d.as_millis() as i64))
+                    .to_rfc3339()
+            }));
         }
-        let delay = (2u64 << attempt).min(30);
-        r.event("WARN", "RECONNECT", format!("Retrying in {delay}s"));
-        tokio::select! {_=cancel.cancelled()=>return Ok(()),_=tokio::time::sleep(Duration::from_secs(delay))=>()}
+        let Some(delay) = delay else {
+            r.event(
+                "ERROR",
+                "RECONNECT",
+                if terminal {
+                    "Stopped: credentials, trust, permissions or configuration require attention"
+                } else {
+                    "Stopped: six consecutive connection failures"
+                },
+            );
+            return Err(error);
+        };
+        r.event(
+            "WARN",
+            "RECONNECT",
+            format!(
+                "Retrying in {}ms; consecutive failures={}/6",
+                delay.as_millis(),
+                retries.failures()
+            ),
+        );
+        tokio::select! { _ = cancel.cancelled() => return Ok(()), _ = tokio::time::sleep(delay) => () }
     }
-    Ok(())
 }
+
 async fn pipe_log<S: AsyncRead + Unpin + Send + 'static>(
     stream: S,
     r: Reporter,
@@ -475,6 +602,7 @@ async fn run_once(
     cancel: CancellationToken,
     r: Reporter,
     tofu_key: Arc<Mutex<Option<String>>>,
+    connected_for: &mut Duration,
 ) -> Result<()> {
     let listener = TcpListener::bind(("127.0.0.1", c.socks_port()))
         .await
@@ -504,54 +632,59 @@ async fn run_once(
     let mut core = None;
     let mut ssh = None;
     let mut tun = None;
+    let mut connected_at = None;
     let outcome=async {
     if c.mode()=="ssh" {
-        let handle=Arc::new(tokio::select!{_=cancel.cancelled()=>return Ok(()),s=transport::connect_ssh_logged(c,pin,tofu_key,r.clone())=>s?});ssh=Some(handle.clone());
+        let handle=Arc::new(tokio::select!{_=cancel.cancelled()=>return Ok(()),s=r.stage("SSH transport and authentication", transport::connect_ssh_logged(c,pin,tofu_key,r.clone()))=>s?});ssh=Some(handle.clone());
         jobs.spawn(socks_server(listener,handle,c.number("max-conns",2000)? as usize,c.boolean("ssh-ipv4-only"),cancel.clone(),r.clone()));
     }else {
         drop(listener);
         let names=if c.mode()=="v2ray"{vec!["v2ray","xray"]}else{vec!["xray"]};
         let binary=find_core(c.get("v2ray-binary",""),&names)?;
         let generated=if c.get("v2ray-config","").is_empty(){Some(xray_config(c,&c.protocol()?,pin))}else{None};
-        let mut p=CoreProcess::start(binary,generated,c.get("v2ray-config",""),false).await?;r.event("INFO","CORE",format!("Started core; PID={:?}",p.child().id()));capture(&mut p,&r,&mut jobs,"CORE");core=Some(p);
+        let mut p=tokio::select!{_=cancel.cancelled()=>return Ok(()),p=r.stage("Core startup", CoreProcess::start(binary,generated,c.get("v2ray-config",""),false))=>p?};r.event("INFO","CORE",format!("Started core; PID={:?}",p.child().id()));capture(&mut p,&r,&mut jobs,"CORE");core=Some(p);
         let mut ready=false;
         for _ in 0..100 {
             if let Some(status)=core.as_mut().unwrap().child().try_wait()?{bail!("core exited during startup ({status})")}
             if TcpStream::connect(("127.0.0.1",c.socks_port())).await.is_ok(){ready=true;break;}
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            tokio::select!{_=cancel.cancelled()=>return Ok(()),_=tokio::time::sleep(Duration::from_millis(100))=>()}
         }ensure!(ready,"SOCKS listener did not become ready");
     }
-    tokio::select!{_=cancel.cancelled()=>return Ok(()),v=verify_logged(Some(c.socks_port()),Some(&r))=>v.context("proxy connectivity verification failed")?};
+    tokio::select!{_=cancel.cancelled()=>return Ok(()),v=r.stage("Proxy verification", verify_logged(Some(c.socks_port()),Some(&r)))=>v.context("proxy connectivity verification failed")?};
     r.log("[+] HTTPS traffic verified through SOCKS");
     if c.tun(){
         if c.mode()=="ssh" && c.boolean("ssh-ipv4-only") {
             r.event("INFO","TUN","IPv4 compatibility: filtering AAAA/HTTPS/SVCB DNS responses; cached IPv6 TLS/HTTP destinations use hostname recovery; other IPv6 traffic stays blocked. SSH carries TCP; UDP applications are unsupported.");
         }
-        let mut p=CoreProcess::start(find_core(c.get("tun-binary",""),&["sing-box"] )?,Some(tun_config(c,excluded,std::env::consts::OS)),"",true).await?;
-        r.event("INFO","TUN",format!("Starting sing-box; PID={:?}; excluded upstream routes={}",p.child().id(),excluded.len()));capture(&mut p,&r,&mut jobs,"TUN");tun=Some(p);tokio::time::sleep(Duration::from_secs(2)).await;
+        let mut p=tokio::select!{_=cancel.cancelled()=>return Ok(()),p=r.stage("TUN startup", CoreProcess::start(find_core(c.get("tun-binary",""),&["sing-box"] )?,Some(tun_config(c,excluded,std::env::consts::OS)),"",true))=>p?};
+        r.event("INFO","TUN",format!("Starting sing-box; PID={:?}; excluded upstream routes={}",p.child().id(),excluded.len()));capture(&mut p,&r,&mut jobs,"TUN");tun=Some(p);tokio::select!{_=cancel.cancelled()=>return Ok(()),_=tokio::time::sleep(Duration::from_secs(2))=>()}
         if let Some(status)=tun.as_mut().unwrap().child().try_wait()?{bail!("TUN exited during startup ({status})")}
-        tokio::select!{_=cancel.cancelled()=>return Ok(()),v=verify_logged(None,Some(&r))=>v.context("system connectivity failed after TUN activation")?};
+        tokio::select!{_=cancel.cancelled()=>return Ok(()),v=r.stage("TUN verification", verify_logged(None,Some(&r)))=>v.context("system connectivity failed after TUN activation")?};
         r.log("[+] Full-device routing verified");
     }
-    r.state("connected");r.health("healthy","");
-    let mut health=tokio::time::interval(Duration::from_secs(30));health.tick().await;
-    loop {
-        tokio::select! {
-            _=cancel.cancelled()=>break Ok(()),
-            _=tokio::time::sleep(Duration::from_secs(1))=>{
-                if let Some(p)=core.as_mut()&& let Some(code)=p.child().try_wait()?{break Err(anyhow::anyhow!("core stopped ({code})"))}
-                if let Some(p)=tun.as_mut()&& let Some(code)=p.child().try_wait()?{break Err(anyhow::anyhow!("TUN stopped ({code})"))}
-                if let Some(s)=&ssh&& s.is_closed(){break Err(anyhow::anyhow!("SSH session closed"))}
-            },
-            _=health.tick()=>{
-                let checked=tokio::select!{_=cancel.cancelled()=>break Ok(()),v=verify_logged(Some(c.socks_port()),Some(&r))=>v};
-                if let Err(e)=checked {break Err(e)}
-                if c.tun(){let checked=tokio::select!{_=cancel.cancelled()=>break Ok(()),v=verify_logged(None,Some(&r))=>v};if let Err(e)=checked{break Err(e)}}
-                r.health("healthy","");
-            }
-        }
-    }
+    connected_at=Some(std::time::Instant::now());
+    r.connected();
+    let port=c.socks_port(); let full_device=c.tun();
+    monitor_connection(cancel.clone(), r.clone(),
+                || {
+                if let Some(p)=core.as_mut()&& let Some(code)=p.child().try_wait()?{return Err(anyhow::anyhow!("core stopped ({code})"))}
+                if let Some(p)=tun.as_mut()&& let Some(code)=p.child().try_wait()?{return Err(anyhow::anyhow!("TUN stopped ({code})"))}
+                if let Some(s)=&ssh&& s.is_closed(){return Err(anyhow::anyhow!("SSH session closed"))}
+                    Ok(())
+                },
+                || {
+                    let report=r.clone();
+                    async move {
+                        let proxy=verify_logged(Some(port),Some(&report)).await;
+                        let system=if full_device { verify_logged(None,Some(&report)).await } else { Ok(()) };
+                        proxy.context("proxy health check failed")?;
+                        system.context("system route health check failed")
+                    }
+                }, Duration::from_secs(1), Duration::from_secs(30)).await
     }.await;
+    *connected_for = connected_at
+        .map(|at: std::time::Instant| at.elapsed())
+        .unwrap_or_default();
     if let Some(p) = tun.as_mut() {
         p.stop().await;
     }
@@ -572,6 +705,53 @@ async fn run_once(
     );
     outcome
 }
+// Probe work runs independently so child exits and cancellation stay responsive.
+async fn monitor_connection<F, P, Fut>(
+    cancel: CancellationToken,
+    r: Reporter,
+    mut alive: F,
+    mut probe: P,
+    liveness_period: Duration,
+    health_period: Duration,
+) -> Result<()>
+where
+    F: FnMut() -> Result<()>,
+    P: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<()>> + Send + 'static,
+{
+    let mut probes = JoinSet::new();
+    let mut gate = HealthGate::default();
+    let mut health = tokio::time::interval(health_period);
+    health.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    health.tick().await;
+    let mut liveness = tokio::time::interval(liveness_period);
+    liveness.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let result=async {
+        loop {
+            tokio::select! {
+                _=cancel.cancelled()=>return Ok(()),
+                _=liveness.tick()=>alive()?,
+                _=health.tick(), if probes.is_empty()=>{probes.spawn(probe());},
+                result=probes.join_next(), if !probes.is_empty()=>{
+                    let checked=result.context("health task missing")?.context("health task failed")?;
+                    match checked {
+                        Ok(())=>{gate.recovered();r.health("healthy","");},
+                        Err(error)=>{
+                            let restart=gate.failed();
+                            r.health("degraded", &error.to_string());
+                            r.event("WARN","HEALTH",format!("Probe cycle failed {}/3: {error:#}",gate.failures()));
+                            if restart { return Err(error.context("three consecutive health probe cycles failed")); }
+                        }
+                    }
+                }
+            }
+        }
+    }.await;
+    probes.abort_all();
+    while probes.join_next().await.is_some() {}
+    result
+}
+
 pub async fn verify(port: Option<u16>) -> Result<()> {
     verify_logged(port, None).await
 }
@@ -879,5 +1059,138 @@ mod forwarding_tests {
             "{text}"
         );
         assert!(!text.contains("Opening TCP channel to 2001:db8"), "{text}");
+    }
+}
+
+#[cfg(test)]
+mod recovery_monitor_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    #[tokio::test]
+    async fn pending_probe_does_not_block_liveness_or_leak_on_exit() {
+        let probes = Arc::new(AtomicUsize::new(0));
+        let active = probes.clone();
+        let mut ticks = 0;
+        let result = tokio::time::timeout(
+            Duration::from_secs(1),
+            monitor_connection(
+                CancellationToken::new(),
+                Reporter::default(),
+                || {
+                    ticks += 1;
+                    if ticks >= 5 {
+                        bail!("child stopped")
+                    }
+                    Ok(())
+                },
+                move || {
+                    let active = active.clone();
+                    async move {
+                        struct Guard(Arc<AtomicUsize>);
+                        impl Drop for Guard {
+                            fn drop(&mut self) {
+                                self.0.fetch_sub(1, Ordering::SeqCst);
+                            }
+                        }
+                        active.fetch_add(1, Ordering::SeqCst);
+                        let _guard = Guard(active);
+                        std::future::pending::<Result<()>>().await
+                    }
+                },
+                Duration::from_millis(10),
+                Duration::from_millis(1),
+            ),
+        )
+        .await
+        .unwrap();
+        assert!(result.unwrap_err().to_string().contains("child stopped"));
+        assert_eq!(probes.load(Ordering::SeqCst), 0);
+    }
+    #[tokio::test]
+    async fn intermittent_failures_recover_and_only_three_consecutive_failures_restart() {
+        let report = Reporter::default();
+        let mut cycle = 0;
+        let result = tokio::time::timeout(
+            Duration::from_secs(1),
+            monitor_connection(
+                CancellationToken::new(),
+                report.clone(),
+                || Ok(()),
+                || {
+                    cycle += 1;
+                    let pass = cycle == 3;
+                    async move {
+                        if pass {
+                            Ok(())
+                        } else {
+                            bail!("temporary probe failure")
+                        }
+                    }
+                },
+                Duration::from_millis(1),
+                Duration::from_millis(2),
+            ),
+        )
+        .await
+        .unwrap();
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("three consecutive")
+        );
+        assert_eq!(cycle, 6);
+        assert_eq!(report.snapshot()["health"]["state"], "degraded");
+    }
+    #[tokio::test]
+    async fn cancellation_stops_pending_health_work() {
+        let token = CancellationToken::new();
+        let stop = token.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            stop.cancel();
+        });
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            monitor_connection(
+                token,
+                Reporter::default(),
+                || Ok(()),
+                std::future::pending::<Result<()>>,
+                Duration::from_millis(1),
+                Duration::from_millis(1),
+            ),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod recovery_diagnostics_tests {
+    use super::*;
+    #[tokio::test]
+    async fn completed_stages_and_recovery_timing_are_exported() {
+        let r = Reporter::default();
+        {
+            let mut s = r.0.lock().unwrap();
+            s.recovery = json!({"attempt":2,"attemptStartedAt":(chrono::Utc::now()-chrono::Duration::seconds(2)).to_rfc3339(),
+                "recoveryStartedAt":(chrono::Utc::now()-chrono::Duration::seconds(5)).to_rfc3339(),
+                "lastFailure":{"reason":"temporary failure"},"nextRetryAt":"old retry"});
+        }
+        r.stage("test stage", async { Ok(()) }).await.unwrap();
+        r.connected();
+        let snapshot = r.snapshot();
+        assert_eq!(snapshot["recovery"]["lastStage"]["name"], "test stage");
+        assert_eq!(snapshot["recovery"]["lastStage"]["success"], true);
+        assert!(snapshot["recovery"]["startupMs"].as_i64().unwrap() >= 2000);
+        assert!(snapshot["recovery"]["recoveryMs"].as_i64().unwrap() >= 5000);
+        assert_eq!(
+            snapshot["recovery"]["lastFailure"]["reason"],
+            "temporary failure"
+        );
+        assert!(snapshot["recovery"]["nextRetryAt"].is_null());
+        assert_eq!(snapshot["state"], "connected");
     }
 }

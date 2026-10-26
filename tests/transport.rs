@@ -151,14 +151,16 @@ async fn tofu_remembers_the_key_for_the_connection_session() {
     };
     assert!(h.check_server_key(key.public_key()).await.unwrap());
     assert!(h.check_server_key(key.public_key()).await.unwrap());
-    assert!(!h.check_server_key(other.public_key()).await.unwrap());
+    assert!(tunnelnest::recovery::permanent(
+        &h.check_server_key(other.public_key()).await.unwrap_err()
+    ));
     let mut reconnected = HostVerifier { first: state, ..h };
-    assert!(
-        !reconnected
+    assert!(tunnelnest::recovery::permanent(
+        &reconnected
             .check_server_key(other.public_key())
             .await
-            .unwrap()
-    );
+            .unwrap_err()
+    ));
 }
 #[tokio::test]
 async fn connect_preserves_bytes_after_response_and_rejects_failure() {
@@ -264,4 +266,109 @@ async fn custom_payload_replaces_the_proxy_connect_request() {
         .disconnect(russh::Disconnect::ByApplication, "test done", "")
         .await;
     proxy.abort();
+}
+
+#[tokio::test]
+async fn identity_and_authentication_failures_are_terminal() {
+    let server = common::server().await;
+    let mut config = Config::parse(&[
+        "-H".into(),
+        "127.0.0.1".into(),
+        "-P".into(),
+        server.port.to_string(),
+        "-S".into(),
+        "localhost".into(),
+        "-u".into(),
+        "alice".into(),
+        "-p".into(),
+        "wrong-password".into(),
+        "-tls-ca".into(),
+        server.ca.path().to_string_lossy().into(),
+        "-ssh-host-key".into(),
+        server.ssh_fingerprint.clone(),
+    ])
+    .unwrap();
+    let rejected = transport::connect_ssh(&config, None, Arc::new(Mutex::new(None)))
+        .await
+        .err()
+        .unwrap();
+    assert!(tunnelnest::recovery::permanent(&rejected), "{rejected:#}");
+    config.flags.insert("p".into(), "secret".into());
+    config
+        .flags
+        .insert("ssh-host-key".into(), "SHA256:wrong-key".into());
+    let changed = transport::connect_ssh(&config, None, Arc::new(Mutex::new(None)))
+        .await
+        .err()
+        .unwrap();
+    assert!(tunnelnest::recovery::permanent(&changed), "{changed:#}");
+    let invalid_cert = transport::certificate_pin(
+        "127.0.0.1",
+        server.port,
+        "wrong.example",
+        true,
+        server.ca.path().to_str().unwrap(),
+        "auto",
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        tunnelnest::recovery::permanent(&invalid_cert),
+        "{invalid_cert:#}"
+    );
+}
+
+#[tokio::test]
+async fn tls_discovery_failure_retries_and_backoff_can_be_cancelled() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let fake = tokio::spawn(async move {
+        loop {
+            let (socket, _) = listener.accept().await.unwrap();
+            drop(socket);
+        }
+    });
+    let config = Config::parse(&[
+        "-H".into(),
+        "127.0.0.1".into(),
+        "-P".into(),
+        port.to_string(),
+        "-u".into(),
+        "alice".into(),
+        "-p".into(),
+        "secret".into(),
+        "-ssh-cert-sha256".into(),
+        "insecure".into(),
+    ])
+    .unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let report = tunnelnest::runtime::Reporter::persistent_in(directory.path(), &config);
+    let mut session = tunnelnest::runtime::Session::start_with_report(config, report.clone());
+    tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            if report.snapshot()["recovery"]["attempt"]
+                .as_u64()
+                .unwrap_or(0)
+                >= 2
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    tokio::time::timeout(Duration::from_secs(1), session.stop())
+        .await
+        .unwrap();
+    let snapshot = report.snapshot();
+    assert_eq!(snapshot["state"], "disconnected");
+    assert!(
+        snapshot["logs"]
+            .as_str()
+            .unwrap()
+            .contains("TLS discovery failed after")
+    );
+    assert!(!snapshot.to_string().contains("secret"));
+    fake.abort();
 }

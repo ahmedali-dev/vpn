@@ -1,5 +1,6 @@
 use crate::config::{Config, Protocol};
-use anyhow::{Context, Result, bail, ensure};
+use crate::recovery::PermanentFailure;
+use anyhow::{Context, Result};
 use serde_json::{Value, json};
 use std::{io::Write, path::PathBuf};
 use tempfile::NamedTempFile;
@@ -28,10 +29,11 @@ pub fn find_core(explicit: &str, names: &[&str]) -> Result<PathBuf> {
             }
         }
     }
-    bail!(
+    Err(anyhow::anyhow!(
         "required core {} not found; set its binary path or put it in cores/ beside tunnel",
         names.join("/")
     )
+    .context(PermanentFailure::Configuration))
 }
 pub fn xray_config(c: &Config, p: &Protocol, pin: Option<&str>) -> Value {
     let addr = c.get("dial-address", &p.address);
@@ -149,11 +151,13 @@ impl CoreProcess {
                     .output(),
             )
             .await??;
-            ensure!(
-                out.status.success(),
-                "TUN config validation failed: {}",
-                String::from_utf8_lossy(&out.stderr)
-            );
+            if !out.status.success() {
+                return Err(anyhow::anyhow!(
+                    "TUN config validation failed: {}",
+                    String::from_utf8_lossy(&out.stderr)
+                )
+                .context(PermanentFailure::Configuration));
+            }
         }
         let mut cmd = Command::new(binary);
         cmd.arg("run")

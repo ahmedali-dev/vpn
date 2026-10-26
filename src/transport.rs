@@ -1,8 +1,9 @@
+use crate::recovery::PermanentFailure;
 use crate::{
     config::{Config, parse_proxy, unescape},
     runtime::Reporter,
 };
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, ensure};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use openssl::{
     ssl::{SslConnector, SslMethod, SslVerifyMode, SslVersion},
@@ -82,7 +83,7 @@ async fn tls_logged(
             }
         }
         if !ca.is_empty() {
-            b.set_ca_file(ca)?;
+            b.set_ca_file(ca).context(PermanentFailure::Configuration)?;
         }
     }
     let mut conf = b.build().configure()?;
@@ -90,17 +91,29 @@ async fn tls_logged(
         conf.set_verify_hostname(false);
     }
     let mut stream = SslStream::new(conf.into_ssl(name)?, stream)?;
-    tokio::time::timeout(Duration::from_secs(30), Pin::new(&mut stream).connect()).await??;
+    if let Err(error) =
+        tokio::time::timeout(Duration::from_secs(30), Pin::new(&mut stream).connect()).await?
+    {
+        let invalid_certificate =
+            stream.ssl().verify_result() != openssl::x509::X509VerifyResult::OK;
+        let error = anyhow::Error::new(error);
+        return Err(if invalid_certificate {
+            error.context(PermanentFailure::Identity)
+        } else {
+            error
+        });
+    }
     if let Some(pin) = pin {
         let cert = stream
             .ssl()
             .peer_certificate()
             .context("server sent no certificate")?;
         let actual = hex::encode(Sha256::digest(cert.to_der()?));
-        ensure!(
-            actual.eq_ignore_ascii_case(pin),
-            "TLS certificate pin mismatch"
-        );
+        if !actual.eq_ignore_ascii_case(pin) {
+            return Err(
+                anyhow::anyhow!("TLS certificate pin mismatch").context(PermanentFailure::Identity)
+            );
+        }
     }
     if let Some(r) = report {
         r.event(
@@ -147,13 +160,24 @@ pub async fn certificate_pin(
             }
         }
         if !ca.is_empty() {
-            b.set_ca_file(ca)?;
+            b.set_ca_file(ca).context(PermanentFailure::Configuration)?;
         }
     }
     let mut conf = b.build().configure()?;
     conf.set_verify_hostname(verify);
     let mut stream = SslStream::new(conf.into_ssl(name)?, stream)?;
-    tokio::time::timeout(Duration::from_secs(30), Pin::new(&mut stream).connect()).await??;
+    if let Err(error) =
+        tokio::time::timeout(Duration::from_secs(30), Pin::new(&mut stream).connect()).await?
+    {
+        let invalid_certificate =
+            stream.ssl().verify_result() != openssl::x509::X509VerifyResult::OK;
+        let error = anyhow::Error::new(error);
+        return Err(if invalid_certificate {
+            error.context(PermanentFailure::Identity)
+        } else {
+            error
+        });
+    }
     Ok(hex::encode(Sha256::digest(
         stream
             .ssl()
@@ -180,7 +204,10 @@ pub async fn resolve_pin(
             certificate_pin(host, port, sni, false, ca, version).await?,
         )),
         pin => {
-            ensure!(hex::decode(pin)?.len() == 32, "invalid pin");
+            let decoded = hex::decode(pin).context(PermanentFailure::Configuration)?;
+            if decoded.len() != 32 {
+                return Err(anyhow::anyhow!("invalid pin").context(PermanentFailure::Configuration));
+            }
             Ok(Some(pin.to_lowercase()))
         }
     }
@@ -227,6 +254,10 @@ pub async fn http_connect(stream: &mut BoxStream, request: &str) -> Result<()> {
         "invalid CONNECT response"
     );
     let status: u16 = parts.next().context("missing CONNECT status")?.parse()?;
+    if status == 401 || status == 403 || status == 407 {
+        return Err(anyhow::anyhow!("CONNECT request rejected ({status})")
+            .context(PermanentFailure::Authentication));
+    }
     ensure!(
         (200..300).contains(&status),
         "CONNECT request rejected ({status})"
@@ -261,8 +292,12 @@ async fn ssh_transport_logged(c: &Config, pin: Option<&str>, r: &Reporter) -> Re
         let u = parse_proxy(c.get("proxy", ""))?;
         let ph = u.host_str().unwrap().trim_matches(['[', ']']);
         let pp = u.port_or_known_default().unwrap();
-        stream =
-            Box::new(TcpStream::connect(authority(c.get("proxy-dial-address", ph), pp)).await?);
+        stream = Box::new(
+            r.stage("Proxy TCP connection", async {
+                Ok(TcpStream::connect(authority(c.get("proxy-dial-address", ph), pp)).await?)
+            })
+            .await?,
+        );
         if u.scheme() == "https" {
             stream = tls_logged(stream, ph, None, "", "auto", Some(r))
                 .await
@@ -303,7 +338,12 @@ async fn ssh_transport_logged(c: &Config, pin: Option<&str>, r: &Reporter) -> Re
             .context("upstream proxy CONNECT failed")?;
         r.event("INFO", "PROXY", "CONNECT accepted (2xx)");
     } else {
-        stream = Box::new(TcpStream::connect(authority(dial, port)).await?);
+        stream = Box::new(
+            r.stage("TCP connection", async {
+                Ok(TcpStream::connect(authority(dial, port)).await?)
+            })
+            .await?,
+        );
     }
     r.event("INFO", "TCP", "Transport socket established");
     if before && c.get("proxy", "").is_empty() {
@@ -314,20 +354,24 @@ async fn ssh_transport_logged(c: &Config, pin: Option<&str>, r: &Reporter) -> Re
         );
         http_connect(&mut stream, &expand_payload(&payload, host, port, "")).await?;
     }
-    stream = tls_logged(
-        stream,
-        if c.get("S", "").is_empty() {
-            host
-        } else {
-            c.get("S", "")
-        },
-        pin,
-        c.get("tls-ca", ""),
-        c.get("tls-version", "auto"),
-        Some(r),
-    )
-    .await
-    .context("SSH TLS handshake failed")?;
+    stream = r
+        .stage(
+            "TLS handshake",
+            tls_logged(
+                stream,
+                if c.get("S", "").is_empty() {
+                    host
+                } else {
+                    c.get("S", "")
+                },
+                pin,
+                c.get("tls-ca", ""),
+                c.get("tls-version", "auto"),
+                Some(r),
+            ),
+        )
+        .await
+        .context("SSH TLS handshake failed")?;
     if !payload.is_empty() && c.get("payload-stage", "before-tls") == "after-tls" {
         r.event(
             "INFO",
@@ -375,7 +419,12 @@ impl client::Handler for HostVerifier {
                     },
                 );
             }
-            return Ok(trusted);
+            if !trusted {
+                return Err(
+                    anyhow::anyhow!("SSH host key mismatch").context(PermanentFailure::Identity)
+                );
+            }
+            return Ok(true);
         }
         if self.tofu {
             let mut first = self.first.lock().unwrap();
@@ -384,7 +433,11 @@ impl client::Handler for HostVerifier {
                 if let Some(r) = &self.report {
                     r.event(if trusted{"INFO"}else{"ERROR"},"SSH",if trusted{"Session-trusted host key matched"}else{"SSH host key changed during this connection session; refusing reconnect"});
                 }
-                return Ok(trusted);
+                if !trusted {
+                    return Err(anyhow::anyhow!("SSH host key mismatch")
+                        .context(PermanentFailure::Identity));
+                }
+                return Ok(true);
             }
             if let Some(r) = &self.report {
                 r.event(
@@ -398,11 +451,17 @@ impl client::Handler for HostVerifier {
         }
         let path = std::path::Path::new(&self.known_hosts);
         let trusted = russh::keys::check_known_hosts_path(&self.host, self.port, key, path)
-            .context("SSH known_hosts verification failed (unknown or changed key)")?;
+            .context("SSH known_hosts verification failed (unknown or changed key)")
+            .context(PermanentFailure::Identity)?;
         if let Some(r) = &self.report {
             r.event(if trusted{"INFO"}else{"ERROR"},"SSH",if trusted{"SSH host key verified against known_hosts"}else{"SSH host key not found in known_hosts; add a trusted fingerprint or known_hosts entry"});
         }
-        Ok(trusted)
+        if !trusted {
+            return Err(
+                anyhow::anyhow!("SSH host key is not trusted").context(PermanentFailure::Identity)
+            );
+        }
+        Ok(true)
     }
 }
 pub async fn connect_ssh(
@@ -449,32 +508,41 @@ pub async fn connect_ssh_logged(
         "SSH",
         "Starting SSH key exchange; handshake timeout=30s; keepalive=15s; missed keepalive limit=3",
     );
-    let mut session = tokio::time::timeout(
-        Duration::from_secs(30),
-        client::connect_stream(Arc::new(cfg), stream, handler),
-    )
-    .await
-    .context("SSH key exchange timed out after 30s")?
-    .context("SSH key exchange or host-key verification failed")?;
+    let mut session = r
+        .stage("SSH key exchange", async {
+            tokio::time::timeout(
+                Duration::from_secs(30),
+                client::connect_stream(Arc::new(cfg), stream, handler),
+            )
+            .await
+            .context("SSH key exchange timed out after 30s")?
+            .context("SSH key exchange or host-key verification failed")
+        })
+        .await?;
     r.event(
         "INFO",
         "SSH",
         "SSH handshake complete; starting password authentication (credentials omitted)",
     );
-    let result = tokio::time::timeout(
-        Duration::from_secs(30),
-        session.authenticate_password(c.get("u", ""), c.get("p", "")),
-    )
-    .await
-    .context("SSH authentication timed out after 30s")?
-    .context("SSH authentication exchange failed")?;
+    let result = r
+        .stage("SSH authentication", async {
+            tokio::time::timeout(
+                Duration::from_secs(30),
+                session.authenticate_password(c.get("u", ""), c.get("p", "")),
+            )
+            .await
+            .context("SSH authentication timed out after 30s")?
+            .context("SSH authentication exchange failed")
+        })
+        .await?;
     if !result.success() {
         r.event(
             "ERROR",
             "SSH",
             "Password authentication rejected; check account credentials and server policy",
         );
-        bail!("SSH password authentication failed")
+        return Err(anyhow::anyhow!("SSH password authentication failed")
+            .context(PermanentFailure::Authentication));
     }
     r.event(
         "INFO",

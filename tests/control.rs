@@ -252,3 +252,40 @@ async fn saved_logs_require_authentication_and_reject_path_traversal() {
         }
     }
 }
+
+#[tokio::test]
+async fn diagnostics_export_includes_authenticated_recovery_metadata() {
+    let token = "d".repeat(64);
+    let app = router(Control::new(
+        "127.0.0.1:12345".into(),
+        token.clone(),
+        false,
+        None,
+        CancellationToken::new(),
+    ));
+    for authenticated in [false, true] {
+        let mut request = Request::builder()
+            .uri("/api/diagnostics")
+            .header("host", "127.0.0.1:12345");
+        if authenticated {
+            request = request.header("x-tunnel-token", &token);
+        }
+        let response = app
+            .clone()
+            .oneshot(request.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        if !authenticated {
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+            continue;
+        }
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), 65536)
+            .await
+            .unwrap();
+        let diagnostics: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(diagnostics.get("recovery").is_some());
+        assert!(diagnostics.get("health").is_some());
+        assert!(!diagnostics.to_string().contains(&token));
+    }
+}
