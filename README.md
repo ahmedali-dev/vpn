@@ -151,7 +151,18 @@ Install the resulting Linux packages with `sudo apt install ./FILE.deb`, `sudo d
 
 ### Publish a versioned GitHub release
 
-The Bash entry point is `scripts/release.sh`. It is prepared for later use; creating the script does not push code, build an app, or publish a release.
+The main-folder Bash entry point is `push_and_release.sh`. It uses `scripts/release.sh` for the release process. The script is prepared for later use; creating it does not push code, build an app, or publish a release.
+
+When you are ready, enter a new version as an argument or let the script prompt for it:
+
+```sh
+bash push_and_release.sh 1.3.3
+# Or prompt for the version:
+bash push_and_release.sh
+```
+
+The script validates the version, updates version metadata, previews the staged changes, and asks for confirmation before committing and pushing the current branch and `rust-vX.Y.Z` tag. The tag automatically starts the GitHub Actions workflow, which builds Windows x64, Ubuntu DEB, Fedora RPM, and Arch packages and publishes the release after all builds succeed. No separate workflow dispatch is needed. Install Git, Python 3 and `gh`, then authenticate using `gh auth login` before running it. Use a new, unused version for each release.
+
 
 From the full project root, when you are ready:
 
