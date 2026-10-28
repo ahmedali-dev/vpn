@@ -21,3 +21,17 @@ test('quick routing overrides preserve arguments and do not rewrite saved profil
  assert.deepEqual(withRouting(original,true),['-mode','ssh','-p','-tun','-max-conns','5','-tun']);
  assert.deepEqual(original,['-mode','ssh','-p','-tun','-auto-route','-max-conns','5']);
 });
+
+
+test('automatic session trust preserves explicit identities and strict opt-outs',()=>{
+ const {withSessionTrustDefault}=require('./ui/profile-options.js');
+ const original=['-mode','ssh','-H','example.invalid'];
+ assert.ok(withSessionTrustDefault(original).includes('-ssh-trust-on-first-use'));
+ assert.ok(!original.includes('-ssh-trust-on-first-use'));
+ for(const policy of [['-ssh-host-key','SHA256:verified'],['-ssh-known-hosts','/sample/known_hosts'],['-ssh-trust-on-first-use=false']]){
+  const profile=[...original,...policy];assert.deepEqual(withSessionTrustDefault(profile),profile);
+ }
+ const ray=['-mode','xray','-v2ray-link','vmess://example'];assert.deepEqual(withSessionTrustDefault(ray),ray);
+ const edited=merge([...original,'-ssh-trust-on-first-use'],[...original,'-ssh-trust-on-first-use=false','-p','secret']);
+ assert.ok(!edited.includes('-ssh-trust-on-first-use'));assert.equal(edited[edited.indexOf('-p')+1],'secret');
+});

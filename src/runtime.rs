@@ -25,9 +25,13 @@ pub struct Status {
     pub state: String,
     pub error: String,
     pub logs: String,
+    pub log_end: u64,
+    pub log_session: String,
     pub connection: Value,
     pub health: Value,
     pub recovery: Value,
+    pub traffic: crate::traffic::TrafficErrors,
+    pub probe_requested: Arc<tokio::sync::Notify>,
     pub log_error: String,
     pub log_file: Option<SessionFile>,
     pub redactor: Redactor,
@@ -38,6 +42,7 @@ impl Default for Reporter {
     fn default() -> Self {
         Self(Arc::new(Mutex::new(Status {
             state: "disconnected".into(),
+            log_session: hex::encode(rand::random::<[u8; 16]>()),
             ..Default::default()
         })))
     }
@@ -103,6 +108,7 @@ impl Reporter {
                 state.log_error = format!("Could not save logs: {e}");
                 state.log_file = None;
             }
+            state.log_end = state.log_end.saturating_add(record.len() as u64);
             state.logs.push_str(&record);
         }
         while state.logs.len() > 65536 {
@@ -187,9 +193,25 @@ impl Reporter {
         self.state("connected");
         self.health("healthy", "");
     }
+    fn traffic_failure(&self, kind: crate::traffic::Failure, message: &str) {
+        let (due, notify) = {
+            let mut s = self.0.lock().unwrap();
+            let reason = s.redactor.clean(message);
+            let due = s.traffic.record(kind, std::time::Instant::now(), reason);
+            (due, s.probe_requested.clone())
+        };
+        if due {
+            self.health(
+                "degraded",
+                "Multiple upstream streams failed; checking tunnel connectivity",
+            );
+            self.event("WARN","TRANSPORT","Upstream error burst: requesting an early connectivity check; keeping the tunnel alive until checks confirm a failure");
+            notify.notify_one();
+        }
+    }
     pub fn snapshot(&self) -> Value {
         let s = self.0.lock().unwrap();
-        json!({"state":s.state,"error":s.error,"logs":s.logs,"connection":s.connection,"health":s.health,"recovery":s.recovery,"administrator":is_admin(),"logFile":s.log_file.as_ref().map(|f|f.path.file_name().unwrap_or_default().to_string_lossy()),"logError":s.log_error})
+        json!({"state":s.state,"error":s.error,"logs":s.logs,"logSession":s.log_session,"logStart":s.log_end.saturating_sub(s.logs.len() as u64),"logEnd":s.log_end,"connection":s.connection,"health":s.health,"recovery":s.recovery,"transportErrors":s.traffic.snapshot(std::time::Instant::now()),"administrator":is_admin(),"logFile":s.log_file.as_ref().map(|f|f.path.file_name().unwrap_or_default().to_string_lossy()),"logError":s.log_error})
     }
 }
 pub fn is_admin() -> bool {
@@ -390,12 +412,24 @@ async fn run(mut c: Config, cancel: CancellationToken, r: Reporter) -> Result<()
     // Explicit compatibility pins survive restarts for this connection session only.
     let mut compatibility_pin = None;
     let tofu_key = Arc::new(Mutex::new(None));
+    let (_network_task, mut network) =
+        crate::network::watch_network(&c, cancel.clone(), r.clone())?;
     let mut retries = RetryPolicy::default();
     let mut attempt = 0u64;
     loop {
         if cancel.is_cancelled() {
             return Ok(());
         }
+        while network.borrow().online == Some(false) {
+            r.health(
+                "offline",
+                "Waiting for a physical network before reconnecting",
+            );
+            tokio::select! {_=cancel.cancelled()=>return Ok(()),value=network.changed()=>if value.is_err(){return Err(anyhow::anyhow!("network monitor stopped"));}}
+        }
+        let attempt_cancel = cancel.child_token();
+        let _network_guard =
+            crate::network::interrupt_on_change(network.clone(), attempt_cancel.clone());
         attempt += 1;
         let started = std::time::Instant::now();
         let mut connected_for = Duration::ZERO;
@@ -424,23 +458,29 @@ async fn run(mut c: Config, cancel: CancellationToken, r: Reporter) -> Result<()
         );
         let result: Result<()> = async {
             let excluded = tokio::select! {
-                _ = cancel.cancelled() => return Ok(()),
+                _ = attempt_cancel.cancelled() => return Ok(()),
                 value = r.stage("DNS preparation", prepare(&mut c, &r)) => value.context("upstream DNS preparation failed")?,
             };
             let pin = if setting == "insecure" && compatibility_pin.is_some() {
                 compatibility_pin.clone()
             } else {
                 tokio::select! {
-                    _ = cancel.cancelled() => return Ok(()),
+                    _ = attempt_cancel.cancelled() => return Ok(()),
                     value = r.stage("TLS discovery", async { tokio::time::timeout(Duration::from_secs(45), transport::resolve_pin(&host,port,&sni,&setting,&ca,c.get("tls-version","auto"))).await.context("TLS discovery timed out after 45s")? }) => value.context("TLS certificate discovery/verification failed")?,
                 }
             };
             if setting == "insecure" { compatibility_pin = pin.clone(); }
-            run_once(&c, &excluded, pin.as_deref(), cancel.clone(), r.clone(), tofu_key.clone(), &mut connected_for).await
+            run_once(&c, &excluded, pin.as_deref(), attempt_cancel.clone(), r.clone(), tofu_key.clone(), &mut connected_for).await
         }.await;
         if cancel.is_cancelled() {
             return Ok(());
         }
+        let result =
+            if attempt_cancel.is_cancelled() && !result.as_ref().err().is_some_and(permanent) {
+                Err(anyhow::Error::new(crate::network::NetworkChanged))
+            } else {
+                result
+            };
         let error = match result {
             Ok(()) => return Ok(()),
             Err(error) => error,
@@ -456,6 +496,11 @@ async fn run(mut c: Config, cancel: CancellationToken, r: Reporter) -> Result<()
                 connected.as_millis()
             ),
         );
+        if error.is::<crate::network::NetworkChanged>() {
+            retries = RetryPolicy::default();
+            r.event("INFO","RECONNECT", "Network recovery: previous attempt cleaned up; refreshing DNS and route exclusions");
+            continue;
+        }
         let terminal = permanent(&error);
         let delay = if terminal {
             None
@@ -502,7 +547,7 @@ async fn run(mut c: Config, cancel: CancellationToken, r: Reporter) -> Result<()
                 retries.failures()
             ),
         );
-        tokio::select! { _ = cancel.cancelled() => return Ok(()), _ = tokio::time::sleep(delay) => () }
+        tokio::select! { _ = cancel.cancelled() => return Ok(()), _ = attempt_cancel.cancelled()=>{retries=RetryPolicy::default();}, _ = tokio::time::sleep(delay) => () }
     }
 }
 
@@ -558,15 +603,31 @@ fn core_line(r: &Reporter, source: &str, data: &[u8], oversized: bool) {
     }
     let line = String::from_utf8_lossy(data);
     let lower = line.to_ascii_lowercase();
-    let level = if ["error", "fatal", "panic"]
-        .iter()
-        .any(|word| lower.contains(word))
-    {
+    let failure = if source.starts_with("CORE") {
+        crate::traffic::Failure::classify(&line)
+    } else {
+        None
+    };
+    if let Some(kind) = failure {
+        r.traffic_failure(kind, &line);
+    }
+    let severity = if lower.contains("[error]") || lower.contains("[fatal]") {
         "ERROR"
-    } else if lower.contains("warn") {
+    } else if lower.contains("[warning]") || lower.contains("[warn]") {
         "WARN"
+    } else if lower.contains("[info]") || lower.contains("[debug]") {
+        "INFO"
+    } else if lower.contains("panic:") || lower.contains("fatal:") {
+        "ERROR"
     } else {
         "INFO"
+    };
+    let level = if severity == "INFO"
+        && failure.is_some_and(|kind| kind != crate::traffic::Failure::ClientClosed)
+    {
+        "WARN"
+    } else {
+        severity
     };
     r.event(level, source, line.trim_end());
 }
@@ -604,6 +665,7 @@ async fn run_once(
     tofu_key: Arc<Mutex<Option<String>>>,
     connected_for: &mut Duration,
 ) -> Result<()> {
+    let health_timeout = c.health_timeout();
     let listener = TcpListener::bind(("127.0.0.1", c.socks_port()))
         .await
         .context("SOCKS port is already occupied")?;
@@ -632,34 +694,45 @@ async fn run_once(
     let mut core = None;
     let mut ssh = None;
     let mut tun = None;
+    let mut tun_started = false;
     let mut connected_at = None;
     let outcome=async {
     if c.mode()=="ssh" {
         let handle=Arc::new(tokio::select!{_=cancel.cancelled()=>return Ok(()),s=r.stage("SSH transport and authentication", transport::connect_ssh_logged(c,pin,tofu_key,r.clone()))=>s?});ssh=Some(handle.clone());
-        jobs.spawn(socks_server(listener,handle,c.number("max-conns",2000)? as usize,c.boolean("ssh-ipv4-only"),cancel.clone(),r.clone()));
+        jobs.spawn(socks_server(listener,handle,c.number("max-conns",2000)? as usize,c.boolean("ssh-ipv4-only"),cancel.clone(),r.clone(),Duration::from_secs(c.number("ssh-channel-timeout",30)? as u64)));
     }else {
         drop(listener);
         let names=if c.mode()=="v2ray"{vec!["v2ray","xray"]}else{vec!["xray"]};
         let binary=find_core(c.get("v2ray-binary",""),&names)?;
         let generated=if c.get("v2ray-config","").is_empty(){Some(xray_config(c,&c.protocol()?,pin))}else{None};
         let mut p=tokio::select!{_=cancel.cancelled()=>return Ok(()),p=r.stage("Core startup", CoreProcess::start(binary,generated,c.get("v2ray-config",""),false))=>p?};r.event("INFO","CORE",format!("Started core; PID={:?}",p.child().id()));capture(&mut p,&r,&mut jobs,"CORE");core=Some(p);
-        let mut ready=false;
-        for _ in 0..100 {
-            if let Some(status)=core.as_mut().unwrap().child().try_wait()?{bail!("core exited during startup ({status})")}
-            if TcpStream::connect(("127.0.0.1",c.socks_port())).await.is_ok(){ready=true;break;}
-            tokio::select!{_=cancel.cancelled()=>return Ok(()),_=tokio::time::sleep(Duration::from_millis(100))=>()}
-        }ensure!(ready,"SOCKS listener did not become ready");
+        let ready=wait_ready(cancel.clone(),Duration::from_secs(c.number("startup-timeout",30)? as u64),
+            ||core.as_mut().unwrap().check_running("core during startup"),
+            ||async {Ok(TcpStream::connect(("127.0.0.1",c.socks_port())).await.is_ok())}).await?;
+        if !ready {return Ok(());}
+
     }
-    tokio::select!{_=cancel.cancelled()=>return Ok(()),v=r.stage("Proxy verification", verify_logged(Some(c.socks_port()),Some(&r)))=>v.context("proxy connectivity verification failed")?};
+    tokio::select!{_=cancel.cancelled()=>return Ok(()),v=r.stage("Proxy verification", verify_with_timeout(Some(c.socks_port()),Some(&r),health_timeout))=>v.context("proxy connectivity verification failed")?};
     r.log("[+] HTTPS traffic verified through SOCKS");
+    let expected_exit=if c.tun(){Some(tokio::select!{_=cancel.cancelled()=>return Ok(()),v=exit_ip(Some(c.socks_port()),health_timeout)=>v.context("could not determine proxy IPv4 exit")?})}else{None};
     if c.tun(){
+        if crate::network::tun_present().await? {return Err(anyhow::anyhow!("TUN address 172.30.111.1 is already in use; disconnect the other tunnel first").context(crate::recovery::PermanentFailure::Configuration));}
         if c.mode()=="ssh" && c.boolean("ssh-ipv4-only") {
             r.event("INFO","TUN","IPv4 compatibility: filtering AAAA/HTTPS/SVCB DNS responses; cached IPv6 TLS/HTTP destinations use hostname recovery; other IPv6 traffic stays blocked. SSH carries TCP; UDP applications are unsupported.");
         }
         let mut p=tokio::select!{_=cancel.cancelled()=>return Ok(()),p=r.stage("TUN startup", CoreProcess::start(find_core(c.get("tun-binary",""),&["sing-box"] )?,Some(tun_config(c,excluded,std::env::consts::OS)),"",true))=>p?};
-        r.event("INFO","TUN",format!("Starting sing-box; PID={:?}; excluded upstream routes={}",p.child().id(),excluded.len()));capture(&mut p,&r,&mut jobs,"TUN");tun=Some(p);tokio::select!{_=cancel.cancelled()=>return Ok(()),_=tokio::time::sleep(Duration::from_secs(2))=>()}
-        if let Some(status)=tun.as_mut().unwrap().child().try_wait()?{bail!("TUN exited during startup ({status})")}
-        tokio::select!{_=cancel.cancelled()=>return Ok(()),v=r.stage("TUN verification", verify_logged(None,Some(&r)))=>v.context("system connectivity failed after TUN activation")?};
+        r.event("INFO","TUN",format!("Starting sing-box; PID={:?}; excluded upstream routes={}",p.child().id(),excluded.len()));capture(&mut p,&r,&mut jobs,"TUN");tun=Some(p);tun_started=true;
+        let ready=r.stage("TUN interface and route readiness",wait_ready(cancel.clone(),
+            Duration::from_secs(c.number("startup-timeout",30)? as u64),
+            ||tun.as_mut().unwrap().check_running("TUN during startup"),
+            ||async {
+                if !crate::network::tun_present().await? {return Ok(false);}
+                let actual=exit_ip(None,health_timeout).await?;
+                matching_exit(expected_exit.unwrap(),actual)?;
+                r.event("INFO","TUN",format!("System IPv4 exit {actual} matches verified proxy exit"));
+                Ok(true)
+            })).await?;
+        if !ready {return Ok(());}
         r.log("[+] Full-device routing verified");
     }
     connected_at=Some(std::time::Instant::now());
@@ -667,18 +740,21 @@ async fn run_once(
     let port=c.socks_port(); let full_device=c.tun();
     monitor_connection(cancel.clone(), r.clone(),
                 || {
-                if let Some(p)=core.as_mut()&& let Some(code)=p.child().try_wait()?{return Err(anyhow::anyhow!("core stopped ({code})"))}
-                if let Some(p)=tun.as_mut()&& let Some(code)=p.child().try_wait()?{return Err(anyhow::anyhow!("TUN stopped ({code})"))}
+                if let Some(p)=core.as_mut(){p.check_running("core")?;}
+                if let Some(p)=tun.as_mut(){p.check_running("TUN")?;}
                 if let Some(s)=&ssh&& s.is_closed(){return Err(anyhow::anyhow!("SSH session closed"))}
                     Ok(())
                 },
                 || {
                     let report=r.clone();
                     async move {
-                        let proxy=verify_logged(Some(port),Some(&report)).await;
-                        let system=if full_device { verify_logged(None,Some(&report)).await } else { Ok(()) };
-                        proxy.context("proxy health check failed")?;
-                        system.context("system route health check failed")
+                        if full_device {
+                            let proxy=exit_ip(Some(port),health_timeout).await.context("proxy exit check failed")?;
+                            let system=exit_ip(None,health_timeout).await.context("system exit check failed")?;
+                            matching_exit(proxy,system)?;
+                            report.event("INFO","HEALTH",format!("Proxy and system IPv4 exits match: {system}"));
+                            Ok(())
+                        }else{verify_with_timeout(Some(port),Some(&report),health_timeout).await.context("proxy health check failed")}
                     }
                 }, Duration::from_secs(1), Duration::from_secs(30)).await
     }.await;
@@ -698,13 +774,78 @@ async fn run_once(
     }
     jobs.abort_all();
     while jobs.join_next().await.is_some() {}
+    let mut cleanup_verified = true;
+    if tun_started {
+        // Allow asynchronous adapter removal, but never delete another app's routes.
+        let check = async {
+            for _ in 0..10 {
+                if !crate::network::tun_present().await? {
+                    return Ok::<_, anyhow::Error>(true);
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            Ok(false)
+        };
+        let removed = matches!(
+            tokio::time::timeout(Duration::from_secs(4), check).await,
+            Ok(Ok(true))
+        );
+        cleanup_verified = removed;
+        r.0.lock().unwrap().recovery["tunCleanupVerified"] = json!(removed);
+        r.event(if removed {"INFO"}else{"WARN"},"CLEANUP",if removed {"TUN interface removal verified"} else {"TUN cleanup could not be verified; inspect remaining adapter/routes before reconnecting"});
+    }
     r.event(
         "INFO",
         "CLEANUP",
         "Stopped networking processes and forwarding tasks; temporary configs released",
     );
+    if !cleanup_verified {
+        return Err(anyhow::anyhow!(
+            "TUN cleanup could not be verified; refusing to install a new set of routes"
+        )
+        .context(crate::recovery::PermanentFailure::Configuration));
+    }
     outcome
 }
+async fn wait_ready<F, P, Fut>(
+    cancel: CancellationToken,
+    deadline: Duration,
+    mut alive: F,
+    mut probe: P,
+) -> Result<bool>
+where
+    F: FnMut() -> Result<()>,
+    P: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<bool>> + Send,
+{
+    async fn check<Fut: std::future::Future<Output = Result<bool>>>(
+        pause: bool,
+        future: Fut,
+    ) -> Result<bool> {
+        if pause {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+        future.await
+    }
+    let mut work = Box::pin(check(false, probe()));
+    let mut ticks = tokio::time::interval(Duration::from_millis(100));
+    ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let timeout = tokio::time::sleep(deadline);
+    tokio::pin!(timeout);
+    let mut last_error = String::new();
+    loop {
+        tokio::select! {
+            _=cancel.cancelled()=>return Ok(false),
+            _=&mut timeout=>bail!("readiness deadline exceeded after {}s: {}",deadline.as_secs(),last_error),
+            _=ticks.tick()=>alive()?,
+            result=&mut work=>{
+                match result {Ok(true)=>return Ok(true),Ok(false)=>(),Err(error)=>last_error=format!("{error:#}")}
+                work=Box::pin(check(true,probe()));
+            }
+        }
+    }
+}
+
 // Probe work runs independently so child exits and cancellation stay responsive.
 async fn monitor_connection<F, P, Fut>(
     cancel: CancellationToken,
@@ -721,6 +862,7 @@ where
 {
     let mut probes = JoinSet::new();
     let mut gate = HealthGate::default();
+    let probe_requested = r.0.lock().unwrap().probe_requested.clone();
     let mut health = tokio::time::interval(health_period);
     health.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     health.tick().await;
@@ -732,6 +874,7 @@ where
                 _=cancel.cancelled()=>return Ok(()),
                 _=liveness.tick()=>alive()?,
                 _=health.tick(), if probes.is_empty()=>{probes.spawn(probe());},
+                _=probe_requested.notified(), if probes.is_empty()=>{probes.spawn(probe());},
                 result=probes.join_next(), if !probes.is_empty()=>{
                     let checked=result.context("health task missing")?.context("health task failed")?;
                     match checked {
@@ -752,74 +895,187 @@ where
     result
 }
 
+fn matching_exit(proxy: IpAddr, system: IpAddr) -> Result<()> {
+    ensure!(
+        proxy == system,
+        "system IPv4 exit {system} differs from proxy exit {proxy}; full-device routing is not verified"
+    );
+    Ok(())
+}
+async fn exit_ip(port: Option<u16>, timeout: Duration) -> Result<IpAddr> {
+    let mut builder = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(timeout)
+        .redirect(reqwest::redirect::Policy::none());
+    if let Some(port) = port {
+        builder = builder.proxy(reqwest::Proxy::all(format!("socks5h://127.0.0.1:{port}"))?);
+    }
+    let client = builder.build()?;
+    // Both destinations force IPv4. A single unavailable service must not
+    // independently make an otherwise healthy tunnel fail verification.
+    let mut failures = Vec::new();
+    for (url, trace) in [
+        ("https://api4.ipify.org", false),
+        ("https://1.1.1.1/cdn-cgi/trace", true),
+    ] {
+        let result: Result<IpAddr> = async {
+            let mut response = client.get(url).send().await?.error_for_status()?;
+            let mut body = Vec::new();
+            while let Some(chunk) = response.chunk().await? {
+                ensure!(
+                    body.len() + chunk.len() <= 8192,
+                    "exit IP response too large"
+                );
+                body.extend_from_slice(&chunk);
+            }
+            parse_exit(&body, trace)
+        }
+        .await;
+        match result {
+            Ok(ip) => return Ok(ip),
+            Err(error) => failures.push(format!("{url}: {error:#}")),
+        }
+    }
+    bail!(
+        "both IPv4 exit services failed; system/proxy routing could not be compared: {}",
+        failures.join("; ")
+    )
+}
+fn parse_exit(body: &[u8], trace: bool) -> Result<IpAddr> {
+    let text = std::str::from_utf8(body)?;
+    let value = if trace {
+        text.lines()
+            .find_map(|s| s.strip_prefix("ip="))
+            .context("trace response has no IP")?
+    } else {
+        text.trim()
+    };
+    let ip: IpAddr = value.parse()?;
+    ensure!(ip.is_ipv4(), "expected an IPv4 exit address");
+    Ok(ip)
+}
+
 pub async fn verify(port: Option<u16>) -> Result<()> {
     verify_logged(port, None).await
 }
 async fn verify_logged(port: Option<u16>, report: Option<&Reporter>) -> Result<()> {
-    let mut b = reqwest::Client::builder()
+    verify_with_timeout(port, report, Duration::from_secs(20)).await
+}
+async fn verify_with_timeout(
+    port: Option<u16>,
+    report: Option<&Reporter>,
+    timeout: Duration,
+) -> Result<()> {
+    let mut builder = reqwest::Client::builder()
         .no_proxy()
-        .timeout(Duration::from_secs(12))
+        .timeout(timeout)
         .redirect(reqwest::redirect::Policy::limited(3));
     if let Some(port) = port {
-        b = b.proxy(reqwest::Proxy::all(format!("socks5h://127.0.0.1:{port}"))?);
+        builder = builder.proxy(reqwest::Proxy::all(format!("socks5h://127.0.0.1:{port}"))?);
     }
-    let client = b.build()?;
-    for url in [
-        "https://api.ipify.org",
-        "https://www.cloudflare.com/cdn-cgi/trace",
-    ] {
-        let started = std::time::Instant::now();
-        if let Some(r) = report {
-            r.event(
-                "INFO",
-                "HEALTH",
-                format!(
-                    "Checking {url} via {}",
-                    if port.is_some() {
-                        "SOCKS (remote DNS)"
-                    } else {
-                        "system routes"
-                    }
-                ),
-            );
-        }
-        match client.get(url).send().await {
-            Ok(response) => {
-                if let Some(r) = report {
-                    r.event(
-                        if response.status().is_success() {
-                            "INFO"
-                        } else {
-                            "WARN"
-                        },
-                        "HEALTH",
-                        format!(
-                            "HTTPS check returned HTTP {} in {}ms",
-                            response.status(),
-                            started.elapsed().as_millis()
-                        ),
-                    );
-                }
-                if response.status().is_success() {
-                    return Ok(());
-                }
-            }
-            Err(e) => {
-                if let Some(r) = report {
-                    r.event(
-                        "WARN",
-                        "HEALTH",
-                        format!(
-                            "HTTPS check failed after {}ms: {e}",
-                            started.elapsed().as_millis()
-                        ),
-                    );
-                }
-            }
-        }
-    }
-    bail!("both HTTPS connectivity checks failed")
+    check_endpoints(
+        builder.build()?,
+        &[
+            "https://api.ipify.org",
+            "https://www.cloudflare.com/cdn-cgi/trace",
+        ],
+        report,
+        if port.is_some() {
+            "SOCKS (remote DNS)"
+        } else {
+            "system routes"
+        },
+        timeout,
+    )
+    .await
 }
+async fn check_endpoints(
+    client: reqwest::Client,
+    urls: &[&str],
+    report: Option<&Reporter>,
+    route: &str,
+    timeout: Duration,
+) -> Result<()> {
+    let mut jobs = JoinSet::new();
+    for url in urls {
+        let url = url.to_string();
+        let client = client.clone();
+        let report = report.cloned();
+        let route = route.to_string();
+        jobs.spawn(async move {
+            let started = std::time::Instant::now();
+            if let Some(r) = &report {
+                r.event(
+                    "INFO",
+                    "HEALTH",
+                    format!(
+                        "Checking {url} via {route}; deadline={}s",
+                        timeout.as_secs()
+                    ),
+                );
+            }
+            let result = match client.get(&url).send().await {
+                Ok(response) if response.status().is_success() => Ok(()),
+                Ok(response) => Err(format!("HTTP {}", response.status())),
+                Err(error) => Err(request_failure(&error)),
+            };
+            if let Some(r) = &report {
+                r.event(
+                    if result.is_ok() { "INFO" } else { "WARN" },
+                    "HEALTH",
+                    format!(
+                        "{url}: {} after {}ms",
+                        result
+                            .as_ref()
+                            .err()
+                            .map(String::as_str)
+                            .unwrap_or("HTTPS check passed"),
+                        started.elapsed().as_millis()
+                    ),
+                );
+            }
+            (url, result)
+        });
+    }
+    let mut failures = Vec::new();
+    while let Some(result) = jobs.join_next().await {
+        match result {
+            Ok((_, Ok(()))) => {
+                jobs.abort_all();
+                while jobs.join_next().await.is_some() {}
+                return Ok(());
+            }
+            Ok((url, Err(reason))) => failures.push(format!("{url}: {reason}")),
+            Err(error) => failures.push(format!("probe task failed: {error}")),
+        }
+    }
+    bail!(
+        "all HTTPS connectivity checks failed via {route} (deadline {}s per endpoint): {}",
+        timeout.as_secs(),
+        failures.join("; ")
+    )
+}
+fn request_failure(error: &reqwest::Error) -> String {
+    use std::error::Error;
+    let category = if error.is_timeout() {
+        "timeout"
+    } else if error.is_connect() {
+        "connect/SOCKS/TLS failure"
+    } else {
+        "request failure"
+    };
+    let mut details = vec![format!("{category}: {error}")];
+    let mut source = error.source();
+    while let Some(error) = source {
+        details.push(error.to_string());
+        source = error.source();
+        if details.len() == 8 {
+            break;
+        }
+    }
+    details.join(": ")
+}
+
 async fn socks_server(
     listener: TcpListener,
     session: Arc<russh::client::Handle<HostVerifier>>,
@@ -827,22 +1083,33 @@ async fn socks_server(
     ipv4: bool,
     cancel: CancellationToken,
     r: Reporter,
+    channel_timeout: Duration,
 ) {
     let permits = Arc::new(Semaphore::new(max));
     let mut jobs = JoinSet::new();
     loop {
         tokio::select! {
             _=cancel.cancelled()=>break,
-            v=listener.accept()=>{match v{Ok((stream,_))=>{if let Ok(permit)=permits.clone().try_acquire_owned(){let s=session.clone();let r=r.clone();jobs.spawn(async move{let _permit=permit;if let Err(e)=socks_connection(stream,s,ipv4,&r).await{r.event("ERROR","SOCKS",format!("{e:#}"));}});}},Err(_)=>break}},
+            v=listener.accept()=>{match v{Ok((stream,_))=>{if let Ok(permit)=permits.clone().try_acquire_owned(){let s=session.clone();let r=r.clone();jobs.spawn(async move{let _permit=permit;if let Err(e)=socks_connection_timed(stream,s,ipv4,&r,channel_timeout).await{r.event("ERROR","SOCKS",format!("{e:#}"));}});}else{r.event("WARN","SOCKS","Connection limit reached; refusing this socket without restarting the SSH session");}},Err(error)=>{r.event("ERROR","SOCKS",format!("Accept failed: {error}"));break}}},
             _=jobs.join_next(),if !jobs.is_empty()=>(),
         }
     }
 }
+#[cfg(test)]
 async fn socks_connection(
+    stream: TcpStream,
+    session: Arc<russh::client::Handle<HostVerifier>>,
+    ipv4: bool,
+    r: &Reporter,
+) -> Result<()> {
+    socks_connection_timed(stream, session, ipv4, r, Duration::from_secs(30)).await
+}
+async fn socks_connection_timed(
     mut stream: TcpStream,
     session: Arc<russh::client::Handle<HostVerifier>>,
     ipv4: bool,
     r: &Reporter,
+    channel_timeout: Duration,
 ) -> Result<()> {
     let (mut host, port) = tokio::time::timeout(Duration::from_secs(15), async {
         ensure!(stream.read_u8().await? == 5, "unsupported SOCKS version");
@@ -916,7 +1183,7 @@ async fn socks_connection(
         format!("Opening TCP channel to {host}:{port}"),
     );
     let channel = match tokio::time::timeout(
-        Duration::from_secs(30),
+        channel_timeout,
         session.channel_open_direct_tcpip(host.clone(), port.into(), "127.0.0.1", 0),
     )
     .await
@@ -927,7 +1194,10 @@ async fn socks_connection(
                 stream.write_all(&[5, 5, 0, 1, 0, 0, 0, 0, 0, 0]).await?;
             }
             match error {
-                Err(_) => bail!("SSH forwarding to {host}:{port} timed out after 30s"),
+                Err(_) => bail!(
+                    "SSH forwarding to {host}:{port} timed out after {}s",
+                    channel_timeout.as_secs()
+                ),
                 Ok(Err(e)) => bail!("SSH forwarding to {host}:{port} refused: {e}"),
                 _ => unreachable!(),
             }
@@ -1192,5 +1462,257 @@ mod recovery_diagnostics_tests {
         );
         assert!(snapshot["recovery"]["nextRetryAt"].is_null());
         assert_eq!(snapshot["state"], "connected");
+    }
+}
+
+#[cfg(test)]
+mod readiness_tests {
+    use super::*;
+    #[test]
+    fn ordinary_internet_access_cannot_pass_as_working_vpn_routing() {
+        assert_eq!(
+            parse_exit(b"192.0.2.1", false).unwrap().to_string(),
+            "192.0.2.1"
+        );
+        assert_eq!(
+            parse_exit(b"fl=1\nip=192.0.2.2\nhttp=h2\n", true)
+                .unwrap()
+                .to_string(),
+            "192.0.2.2"
+        );
+        assert!(parse_exit(b"::1", false).is_err());
+        assert!(parse_exit(b"a web page instead of an IP", false).is_err());
+        let proxy = "192.0.2.1".parse().unwrap();
+        assert!(matching_exit(proxy, "192.0.2.2".parse().unwrap()).is_err());
+        matching_exit(proxy, proxy).unwrap();
+    }
+    #[tokio::test]
+    async fn readiness_retries_temporary_failures_without_a_fixed_startup_delay() {
+        let mut calls = 0;
+        assert!(
+            wait_ready(
+                CancellationToken::new(),
+                Duration::from_secs(2),
+                || Ok(()),
+                || {
+                    calls += 1;
+                    let ready = calls >= 3;
+                    async move {
+                        if ready {
+                            Ok(true)
+                        } else {
+                            bail!("routes not ready")
+                        }
+                    }
+                }
+            )
+            .await
+            .unwrap()
+        );
+        assert_eq!(calls, 3);
+    }
+    #[tokio::test]
+    async fn readiness_monitors_core_death_while_probe_is_stuck() {
+        let mut checks = 0;
+        let error = wait_ready(
+            CancellationToken::new(),
+            Duration::from_secs(5),
+            || {
+                checks += 1;
+                if checks == 2 {
+                    bail!("core exited")
+                }
+                Ok(())
+            },
+            std::future::pending::<Result<bool>>,
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("core exited"));
+    }
+    #[tokio::test]
+    async fn readiness_deadline_and_cancel_bound_pending_work() {
+        let error = wait_ready(
+            CancellationToken::new(),
+            Duration::from_millis(25),
+            || Ok(()),
+            std::future::pending::<Result<bool>>,
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("readiness deadline"));
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        assert!(
+            !wait_ready(
+                cancel,
+                Duration::from_secs(10),
+                || Ok(()),
+                std::future::pending::<Result<bool>>
+            )
+            .await
+            .unwrap()
+        );
+    }
+}
+
+#[cfg(test)]
+mod transport_probe_tests {
+    use super::*;
+    #[tokio::test]
+    async fn error_burst_checks_a_live_transport_without_restarting_it() {
+        let r = Reporter::default();
+        let cancel = CancellationToken::new();
+        let monitor = cancel.clone();
+        let report = r.clone();
+        let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let probes = count.clone();
+        let task = tokio::spawn(async move {
+            monitor_connection(
+                monitor,
+                report,
+                || Ok(()),
+                move || {
+                    let count = probes.clone();
+                    async move {
+                        count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        Ok(())
+                    }
+                },
+                Duration::from_millis(1),
+                Duration::from_secs(3600),
+            )
+            .await
+        });
+        for _ in 0..3 {
+            core_line(
+                &r,
+                "CORE/STDOUT",
+                b"connection ends > websocket: close 1006 (abnormal closure): unexpected EOF",
+                false,
+            );
+        }
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while count.load(std::sync::atomic::Ordering::SeqCst) == 0
+                || r.snapshot()["health"]["state"] != "healthy"
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(
+            !task.is_finished(),
+            "successful probes must keep the existing transport alive"
+        );
+        assert_eq!(r.snapshot()["transportErrors"]["websocketClosures"], 3);
+        assert!(
+            r.snapshot()["logs"]
+                .as_str()
+                .unwrap()
+                .contains("[WARN] [CORE/STDOUT]")
+        );
+        cancel.cancel();
+        task.await.unwrap().unwrap();
+    }
+    #[test]
+    fn cursors_remain_valid_when_unicode_logs_roll_over() {
+        let r = Reporter::default();
+        for n in 0..1500 {
+            r.event("INFO", "TEST", format!("{n} مرحبا {}", "x".repeat(80)));
+        }
+        let s = r.snapshot();
+        assert!(s["logStart"].as_u64().unwrap() > 0);
+        assert_eq!(
+            s["logEnd"].as_u64().unwrap() - s["logStart"].as_u64().unwrap(),
+            s["logs"].as_str().unwrap().len() as u64
+        );
+    }
+}
+
+#[cfg(test)]
+mod verification_tests {
+    use super::*;
+    async fn response(status: u16, wait: Duration) -> (String, JoinHandle<()>) {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0; 4096];
+            let _ = stream.read(&mut request).await;
+            tokio::time::sleep(wait).await;
+            let _ = stream
+                .write_all(
+                    format!(
+                        "HTTP/1.1 {status} Test\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    )
+                    .as_bytes(),
+                )
+                .await;
+        });
+        (format!("http://{addr}/"), task)
+    }
+    #[tokio::test]
+    async fn passing_endpoint_does_not_wait_for_a_stalled_endpoint() {
+        let (slow, slow_task) = response(200, Duration::from_secs(3)).await;
+        let (fast, fast_task) = response(200, Duration::ZERO).await;
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(2))
+            .build()
+            .unwrap();
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            check_endpoints(
+                client,
+                &[&slow, &fast],
+                None,
+                "test proxy",
+                Duration::from_secs(2),
+            ),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        slow_task.abort();
+        fast_task.await.unwrap();
+    }
+    #[tokio::test]
+    async fn failure_includes_http_status_timeout_endpoint_and_cause() {
+        let (bad, bad_task) = response(503, Duration::ZERO).await;
+        let (slow, slow_task) = response(200, Duration::from_secs(3)).await;
+        let deadline = Duration::from_millis(100);
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(deadline)
+            .build()
+            .unwrap();
+        let error = check_endpoints(client, &[&bad, &slow], None, "test proxy", deadline)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("503"), "{error}");
+        assert!(error.contains("timeout"), "{error}");
+        assert!(error.contains(&bad));
+        assert!(error.contains(&slow));
+        bad_task.await.unwrap();
+        slow_task.abort();
+    }
+    #[test]
+    fn xray_deprecation_warnings_are_not_promoted_by_the_common_errors_package_name() {
+        let r = Reporter::default();
+        core_line(
+            &r,
+            "CORE/STDOUT",
+            b"2026/10/27 21:47:01 [Warning] common/errors: The feature VMess is deprecated",
+            false,
+        );
+        assert!(
+            r.snapshot()["logs"]
+                .as_str()
+                .unwrap()
+                .contains("[WARN] [CORE/STDOUT]")
+        );
+        assert!(!r.snapshot()["logs"].as_str().unwrap().contains("[ERROR]"));
     }
 }

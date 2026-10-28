@@ -160,7 +160,7 @@ pub fn run() -> Result<()> {
         ])
         .setup(|app| {
             WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
-                .title("TunnelNest · Rust")
+                .title(concat!("TunnelNest · v", env!("CARGO_PKG_VERSION")))
                 .inner_size(1320., 960.)
                 .min_inner_size(820., 650.)
                 // Let HTML drop zones receive files rather than native path-only events.

@@ -191,7 +191,8 @@ async fn generated_configs_pass_bundled_core_validation_when_available() {
         );
         return;
     }
-    let c=Config::parse(&["-mode","xray","-v2ray-link","vless://00000000-0000-0000-0000-000000000001@example.com:443?security=tls&type=ws&sni=example.com"].map(str::to_owned)).unwrap();
+    let mut c=Config::parse(&["-mode","xray","-v2ray-link","vless://00000000-0000-0000-0000-000000000001@example.com:443?security=tls&type=ws&sni=example.com"].map(str::to_owned)).unwrap();
+    c.flags.insert("block-quic".into(), "true".into());
     {
         let platform = std::env::consts::OS;
         let mut file = tempfile::NamedTempFile::new().unwrap();
@@ -241,7 +242,7 @@ async fn core_shutdown_waits_and_removes_only_generated_config() {
     let binary = dir.path().join("fake-core");
     let marker = dir.path().join("marker");
     let stopped = dir.path().join("stopped");
-    std::fs::write(&binary,format!("#!/usr/bin/env python3\nimport sys,signal,time,pathlib\npathlib.Path({:?}).write_text(sys.argv[-1])\ndef stop(*args):\n pathlib.Path({:?}).write_text('stopped')\n sys.exit(0)\nsignal.signal(signal.SIGTERM,stop)\nwhile True: time.sleep(0.01)\n",marker.to_str().unwrap(),stopped.to_str().unwrap())).unwrap();
+    std::fs::write(&binary,format!("#!/usr/bin/env python3\nimport sys,signal,time,pathlib\nif '-test' in sys.argv: sys.exit(0)\npathlib.Path({:?}).write_text(sys.argv[-1])\ndef stop(*args):\n pathlib.Path({:?}).write_text('stopped')\n sys.exit(0)\nsignal.signal(signal.SIGTERM,stop)\nwhile True: time.sleep(0.01)\n",marker.to_str().unwrap(),stopped.to_str().unwrap())).unwrap();
     std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
     let mut p = CoreProcess::start(binary.clone(), Some(json!({"test":"secret"})), "", false)
         .await

@@ -51,3 +51,41 @@ test('existing profiles keep their certificate verification choices when new def
  current.context.saved=['-mode','xray'];
  vm.runInContext('applyArgs(saved)',current.context);assert.equal(current.element('pinMode').value,'auto');
 });
+
+
+test('SSH session trust is preselected and an unchecked choice survives saving and reopening',()=>{
+ const current=page();current.context.saved=['-mode','ssh','-H','example.invalid'];
+ vm.runInContext('applyArgs(saved)',current.context);assert.equal(current.element('sshTOFU').checked,true);
+ current.element('sshTOFU').checked=false;
+ current.context.saved=Array.from(vm.runInContext('args()',current.context));
+ assert.ok(current.context.saved.includes('-ssh-trust-on-first-use=false'));
+ vm.runInContext('applyArgs(saved)',current.context);assert.equal(current.element('sshTOFU').checked,false);
+ vm.runInContext('newProfile()',current.context);assert.equal(current.element('sshTOFU').checked,true);
+});
+
+
+test('TCP web fallback is opt-in and survives profile edits without altering other UDP options',()=>{
+ const current=page();current.context.saved=['-mode','xray','-block-quic','-max-conns','24'];
+ vm.runInContext('applyArgs(saved)',current.context);assert.equal(current.element('blockQuic').checked,true);
+ let result=Array.from(vm.runInContext('args()',current.context));assert.ok(result.includes('-block-quic'));assert.equal(result[result.indexOf('-max-conns')+1],'24');
+ current.element('blockQuic').checked=false;result=Array.from(vm.runInContext('args()',current.context));assert.ok(!result.includes('-block-quic'));
+ current.element('blockQuic').checked=true;vm.runInContext('newProfile()',current.context);assert.equal(current.element('blockQuic').checked,false);
+});
+
+
+test('passing connectivity checks do not hide recent per-stream failures',()=>{
+ const current=page();current.context.document.body=current.element('body');
+ vm.runInContext("connectionState='connected';latestStatus={health:{state:'healthy'},transportErrors:{recentUpstreamFailures:4}};updateDashboard()",current.context);
+ assert.match(current.element('healthState').textContent,/4 recent stream failures/);
+ vm.runInContext("latestStatus.transportErrors.recentUpstreamFailures=0;updateDashboard()",current.context);
+ assert.equal(current.element('healthState').textContent,'Connection verified');
+});
+
+
+test('verification timeout can be edited and does not duplicate the original flag',()=>{
+ const current=page();current.context.saved=['-mode','xray','-health-timeout','30'];
+ vm.runInContext('applyArgs(saved)',current.context);assert.equal(current.element('healthTimeout').value,'30');
+ current.element('healthTimeout').value='45';const values=Array.from(vm.runInContext('args()',current.context));
+ assert.equal(values.filter(v=>v==='-health-timeout').length,1);assert.equal(values[values.indexOf('-health-timeout')+1],'45');
+ vm.runInContext('newProfile()',current.context);assert.equal(current.element('healthTimeout').value,'20');
+});

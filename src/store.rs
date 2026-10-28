@@ -338,7 +338,13 @@ pub fn credentials_removed(args: &[String]) -> Vec<String> {
     let mut out = args.to_vec();
     let mut i = 0;
     while i < out.len() {
-        if BOOL_FLAGS.contains(&out[i].trim_start_matches('-')) {
+        if BOOL_FLAGS.contains(
+            &out[i]
+                .trim_start_matches('-')
+                .split('=')
+                .next()
+                .unwrap_or_default(),
+        ) {
             i += 1;
             continue;
         }

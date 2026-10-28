@@ -32,7 +32,7 @@ struct Helper {
     cancel: CancellationToken,
     task: JoinHandle<()>,
     mirror: Reporter,
-    last: Arc<Mutex<String>>,
+    last: Arc<Mutex<LogCursor>>,
 }
 impl Drop for Helper {
     fn drop(&mut self) {
@@ -108,13 +108,16 @@ impl Control {
             }
             v["administrator"] = json!(is_admin());
             v["helperAvailable"] = json!(true);
+            v["version"] = json!(env!("CARGO_PKG_VERSION"));
             return Ok(v);
         }
         let session = self.session.lock().await;
-        Ok(session
+        let mut status = session
             .as_ref()
             .map(|s| s.report.snapshot())
-            .unwrap_or_else(|| Reporter::default().snapshot()))
+            .unwrap_or_else(|| Reporter::default().snapshot());
+        status["version"] = json!(env!("CARGO_PKG_VERSION"));
+        Ok(status)
     }
     async fn start(&self, args: Vec<String>) -> Result<()> {
         let c = Config::parse(&args)?;
@@ -162,7 +165,7 @@ impl Control {
             "HELPER",
             "Administrator helper attached; mirroring connection logs to this user's log directory",
         );
-        let last = Arc::new(Mutex::new(String::new()));
+        let last = Arc::new(Mutex::new(LogCursor::default()));
         let report = mirror.clone();
         let previous_logs = last.clone();
         let task = tokio::spawn(async move {
@@ -193,15 +196,109 @@ async fn close_helper(helper: Helper) {
     }
     let _ = helper_request(&helper.url, "quit", Some(json!({}))).await;
 }
-fn mirror_logs(report: &Reporter, last: &Mutex<String>, status: &Value) {
+#[derive(Default)]
+struct LogCursor {
+    session: String,
+    end: u64,
+    legacy: String,
+    retired: std::collections::VecDeque<String>,
+}
+fn mirror_logs(report: &Reporter, last: &Mutex<LogCursor>, status: &Value) {
     let current = status["logs"].as_str().unwrap_or("");
     let mut previous = last.lock().unwrap();
-    if current == previous.as_str() {
+    if let (Some(session), Some(start), Some(end)) = (
+        status["logSession"].as_str(),
+        status["logStart"].as_u64(),
+        status["logEnd"].as_u64(),
+    ) && !session.is_empty()
+        && end.checked_sub(start) == Some(current.len() as u64)
+    {
+        if previous.retired.iter().any(|old| old == session) {
+            return;
+        }
+        let same = previous.session == session;
+        if same && end <= previous.end {
+            return;
+        }
+        let offset = if same {
+            previous.end.saturating_sub(start).min(current.len() as u64) as usize
+        } else {
+            0
+        };
+        if current.is_char_boundary(offset) {
+            if same && previous.end < start {
+                report.event(
+                    "WARN",
+                    "HELPER",
+                    format!(
+                        "Helper log buffer advanced before polling; {} bytes were missed",
+                        start - previous.end
+                    ),
+                );
+            }
+            mirror_events(report, &current[offset..]);
+            if !same && !previous.session.is_empty() {
+                if previous.retired.len() == 32 {
+                    previous.retired.pop_front();
+                }
+                let old = std::mem::take(&mut previous.session);
+                previous.retired.push_back(old);
+            }
+            previous.session = session.into();
+            previous.end = end;
+            previous.legacy.clear();
+            return;
+        }
+    }
+    // Older helpers do not expose cursors. Find the exact rolling-buffer overlap
+    // in linear time, including snapshots truncated in the middle of a log line.
+    if current.is_empty() || previous.legacy.contains(current) {
         return;
     }
-    let extra = current.strip_prefix(previous.as_str()).unwrap_or(current);
-    report.event("INFO", "HELPER", extra);
-    *previous = current.to_owned();
+    let overlap = log_overlap(previous.legacy.as_bytes(), current.as_bytes());
+    if current.is_char_boundary(overlap) {
+        mirror_events(report, &current[overlap..]);
+    }
+    previous.legacy = current.into();
+}
+fn mirror_events(report: &Reporter, fragment: &str) {
+    for line in fragment.lines() {
+        let header = line.find('[').map(|i| &line[i..]).unwrap_or("");
+        let level = if header.starts_with("[ERROR]") {
+            "ERROR"
+        } else if header.starts_with("[WARN]") {
+            "WARN"
+        } else {
+            "INFO"
+        };
+        report.event(level, "HELPER", line);
+    }
+}
+fn log_overlap(previous: &[u8], current: &[u8]) -> usize {
+    if current.is_empty() {
+        return 0;
+    }
+    let mut prefix = vec![0usize; current.len()];
+    for i in 1..current.len() {
+        let mut n = prefix[i - 1];
+        while n > 0 && current[i] != current[n] {
+            n = prefix[n - 1];
+        }
+        if current[i] == current[n] {
+            n += 1;
+        }
+        prefix[i] = n;
+    }
+    let mut matched = 0;
+    for byte in previous {
+        while matched > 0 && (matched == current.len() || *byte != current[matched]) {
+            matched = prefix[matched - 1];
+        }
+        if *byte == current[matched] {
+            matched += 1;
+        }
+    }
+    matched
 }
 pub fn valid_helper(raw: &str) -> Result<url::Url> {
     let u = url::Url::parse(raw.trim())?;
@@ -415,7 +512,7 @@ async fn api(c: Arc<Control>, path: &str, req: Request) -> Result<Value> {
         "/api/diagnostics" => {
             let s = c.status().await?;
             return Ok(
-                json!({"engine":"rust","version":env!("CARGO_PKG_VERSION"),"platform":std::env::consts::OS,"arch":std::env::consts::ARCH,"state":s["state"],"health":s["health"],"recovery":s["recovery"],"administrator":is_admin()}),
+                json!({"engine":"rust","version":env!("CARGO_PKG_VERSION"),"platform":std::env::consts::OS,"arch":std::env::consts::ARCH,"state":s["state"],"health":s["health"],"recovery":s["recovery"],"transportErrors":s["transportErrors"],"administrator":is_admin()}),
             );
         }
         "/api/vault/status" => {
@@ -568,6 +665,11 @@ pub async fn serve_with_ready(
     let token = hex::encode(random::<32>());
     let store = if helper {
         None
+    } else if notify.is_some() {
+        // Native windows must appear before any interactive OS keychain access.
+        // Existing keychain vaults can be unlocked from the rendered UI; password
+        // vaults retain their usual unlock flow. No secret is read at startup.
+        Some(Store::open_password(&Store::default_path()?)?)
     } else {
         Some(Store::open(&Store::default_path()?)?)
     };
@@ -636,10 +738,93 @@ pub async fn serve_with_ready(
 mod log_mirror_tests {
     use super::*;
     #[test]
+    fn rolling_snapshots_and_stale_polls_do_not_duplicate_saved_logs() {
+        let report = Reporter::default();
+        let cursor = Mutex::new(LogCursor::default());
+        let first = json!({"logs":"first\nsecond\n","logSession":"one","logStart":0,"logEnd":13});
+        mirror_logs(&report, &cursor, &first);
+        mirror_logs(
+            &report,
+            &cursor,
+            &json!({"logs":"second\nthird\n","logSession":"one","logStart":6,"logEnd":19}),
+        );
+        mirror_logs(&report, &cursor, &first);
+        let text = report.snapshot()["logs"].as_str().unwrap().to_owned();
+        assert_eq!(text.matches("first").count(), 1);
+        assert_eq!(text.matches("second").count(), 1);
+        assert_eq!(text.matches("third").count(), 1);
+        mirror_logs(
+            &report,
+            &cursor,
+            &json!({"logs":"first\n","logSession":"two","logStart":0,"logEnd":6}),
+        );
+        assert_eq!(
+            report.snapshot()["logs"]
+                .as_str()
+                .unwrap()
+                .matches("first")
+                .count(),
+            2,
+            "a new session is a new stream"
+        );
+        mirror_logs(&report, &cursor, &first);
+        assert_eq!(
+            report.snapshot()["logs"]
+                .as_str()
+                .unwrap()
+                .matches("first")
+                .count(),
+            2,
+            "a late response from a retired session must be ignored"
+        );
+    }
+    #[test]
+    fn legacy_rolling_overlap_handles_unicode_and_source_resets() {
+        let report = Reporter::default();
+        let cursor = Mutex::new(LogCursor::default());
+        for text in [
+            "first\nمرحبا\nsecond\n",
+            "حبا\nsecond\nthird\n",
+            "second\nthird\n",
+        ] {
+            mirror_logs(&report, &cursor, &json!({"logs":text}));
+        }
+        let text = report.snapshot()["logs"].as_str().unwrap().to_owned();
+        assert_eq!(text.matches("second").count(), 1);
+        assert_eq!(text.matches("third").count(), 1);
+        assert_eq!(log_overlap(b"ababab", b"ababx"), 4);
+    }
+    #[test]
+    fn cursor_gaps_are_reported_and_malformed_offsets_do_not_panic() {
+        let report = Reporter::default();
+        let cursor = Mutex::new(LogCursor::default());
+        mirror_logs(
+            &report,
+            &cursor,
+            &json!({"logs":"a\n","logSession":"s","logStart":0,"logEnd":2}),
+        );
+        mirror_logs(
+            &report,
+            &cursor,
+            &json!({"logs":"b\n","logSession":"s","logStart":10,"logEnd":12}),
+        );
+        assert!(
+            report.snapshot()["logs"]
+                .as_str()
+                .unwrap()
+                .contains("8 bytes were missed")
+        );
+        mirror_logs(
+            &report,
+            &cursor,
+            &json!({"logs":"é\n","logSession":"s","logStart":11,"logEnd":14}),
+        );
+    }
+    #[test]
     fn helper_snapshots_append_only_new_events_to_user_files() {
         let dir = tempfile::tempdir().unwrap();
         let report = Reporter::persistent_in(dir.path(), &Config::default());
-        let previous = Mutex::new(String::new());
+        let previous = Mutex::new(LogCursor::default());
         let first = json!({"logs":"[INFO] SSH established\n"});
         mirror_logs(&report, &previous, &first);
         let initial = report.snapshot()["logs"].as_str().unwrap().to_owned();
@@ -656,5 +841,9 @@ mod log_mirror_tests {
         assert!(text.contains("Remote closed"));
         let saved = logging::read(dir.path(), status["logFile"].as_str().unwrap()).unwrap();
         assert!(saved.contains("Remote closed"));
+        assert!(
+            saved.contains("[ERROR] [HELPER]"),
+            "mirroring must preserve source severity"
+        );
     }
 }

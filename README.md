@@ -217,3 +217,24 @@ Arch release packages use `x86_64`. ARM64 (`aarch64`) machines cannot install th
 The older main-folder files and SSH/Go application are preserved locally in `archives/main-legacy-20261026.tar.gz` and `archives/sshTLS-legacy-20261026.tar.gz`. Each includes a verified SHA-256 manifest and has a checksum sidecar. Archives are excluded from Git because they may contain local settings or logs. The original sources also remain in Git history.
 
 The repository root now contains `Cargo.toml`, `Cargo.lock`, `build.rs`, `tauri.conf.json`, `src/`, `desktop/`, `scripts/`, and `tests/`. Generated `target/`, `dist/`, installed dependencies, and caches remain excluded and have been removed.
+
+
+## Native macOS build
+
+Build on Apple Silicon or Intel macOS with Rust stable, Xcode Command Line Tools, Python 3, and static OpenSSL (`brew install openssl@3 pkg-config`). Then run:
+
+```sh
+bash scripts/build_for_macos.sh --check
+bash scripts/build_for_macos.sh
+open dist/macos/TunnelNest.app
+```
+
+The script builds the current Mac architecture, embeds the UI and Cargo version, downloads checksum-verified official Xray and sing-box cores, checks for accidental Homebrew dynamic dependencies, and creates `dist/macos/TunnelNest.app`, a ZIP archive, and its SHA-256 file. The app includes its icon and networking cores in standard bundle resource locations, including for administrator launches. It does not install Rust or Homebrew automatically.
+
+Use `--debug` for faster development builds, `--open` to launch after building, or `--no-cores` only for UI-only work. `CARGO_TARGET_DIR`, `CARGO_HOME`, `RUSTUP_HOME`, and `OPENSSL_DIR` are respected. The all-platform dispatcher also recognizes macOS. Local builds are ad-hoc signed; public distribution still requires a Developer ID identity and notarization. `MAC_SIGN_IDENTITY` selects an existing signing identity; the script does not manage private signing credentials or notarize automatically. macOS is a local build target and is not added to the existing release Actions matrix.
+
+### Interface motion and SSH session trust
+
+The interface uses short entrance, dialog and hover transitions, plus a connection indicator while connecting. Reduced-motion preferences disable these animations. Library controls use standard-sized buttons with the existing line icons.
+
+In the desktop editor, first-use SSH session trust is preselected when a profile has no configured host-key fingerprint or known_hosts path. This trusts the first key without independent identity verification, then rejects a different key during reconnects in that session. A configured fingerprint or known_hosts path keeps its verification policy. Unchecking session trust is remembered as `-ssh-trust-on-first-use=false`, including in saved/shared profiles; CLI defaults remain unchanged. The automatic default is also applied when running older desktop SSH profiles without a configured trust policy, without rewriting their saved records.

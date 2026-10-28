@@ -1,7 +1,12 @@
 (() => {
   'use strict';
   if (window !== window.top) return;
-  const invoke = (command, args) => window.__TAURI__.core.invoke(command, args);
+  const invoke = async (command, args) => {
+    try { return await window.__TAURI__.core.invoke(command, args); }
+    catch (reason) {
+      throw new Error(typeof reason === 'string' ? reason : reason?.message || 'Desktop request failed');
+    }
+  };
   Object.defineProperty(window, 'tunnelDesktop', {
     value: Object.freeze({
       request: (path, body) => invoke('control_request', { path, body: body === undefined ? null : body }),

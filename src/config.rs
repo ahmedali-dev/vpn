@@ -13,6 +13,7 @@ pub const BOOL_FLAGS: &[&str] = &[
     "ui-no-browser",
     "ssh-trust-on-first-use",
     "ssh-ipv4-only",
+    "block-quic",
 ];
 pub const VALUE_FLAGS: &[&str] = &[
     "mode",
@@ -24,6 +25,15 @@ pub const VALUE_FLAGS: &[&str] = &[
     "socks-port",
     "pac-port",
     "max-conns",
+    "ssh-connect-timeout",
+    "ssh-handshake-timeout",
+    "ssh-channel-timeout",
+    "ssh-keepalive-interval",
+    "ssh-keepalive-max",
+    "ssh-inactivity-timeout",
+    "tun-mtu",
+    "startup-timeout",
+    "health-timeout",
     "tls-version",
     "ssh-host-key",
     "ssh-known-hosts",
@@ -128,6 +138,29 @@ impl Config {
                 "invalid certificate SHA256 pin"
             );
         }
+        for (key, default, minimum, maximum) in [
+            ("ssh-connect-timeout", 45, 5, 300),
+            ("ssh-handshake-timeout", 30, 5, 300),
+            ("ssh-channel-timeout", 30, 1, 300),
+            ("ssh-keepalive-interval", 15, 0, 300),
+            ("ssh-keepalive-max", 3, 1, 10),
+            ("ssh-inactivity-timeout", 90, 0, 3600),
+            ("tun-mtu", 1500, 1280, 9000),
+            ("startup-timeout", 30, 5, 180),
+            ("health-timeout", 20, 5, 120),
+        ] {
+            let value = c.number(key, default)?;
+            ensure!(
+                (minimum..=maximum).contains(&value),
+                "invalid {key}: expected {minimum}..={maximum}"
+            );
+        }
+        let idle = c.number("ssh-inactivity-timeout", 90)?;
+        let keepalive = c.number("ssh-keepalive-interval", 15)?;
+        ensure!(
+            idle == 0 || keepalive == 0 || idle > keepalive * c.number("ssh-keepalive-max", 3)?,
+            "SSH inactivity timeout must exceed the keepalive failure window (or use 0 to disable it)"
+        );
         if !c.get("proxy", "").is_empty() {
             parse_proxy(c.get("proxy", ""))?;
         }
@@ -160,6 +193,10 @@ impl Config {
                     "certificate pins require TLS"
                 );
             } else {
+                ensure!(
+                    !c.boolean("block-quic"),
+                    "set UDP/QUIC policy inside a custom core configuration"
+                );
                 ensure!(
                     !c.tun(),
                     "TUN requires a generated config and server address"
@@ -209,6 +246,9 @@ impl Config {
     }
     pub fn tun(&self) -> bool {
         self.boolean("tun") || self.boolean("auto-route")
+    }
+    pub fn health_timeout(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.number("health-timeout", 20).unwrap_or(20) as u64)
     }
     pub fn socks_port(&self) -> u16 {
         self.number("socks-port", 1080).unwrap_or(1080) as u16

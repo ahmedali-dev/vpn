@@ -9,9 +9,9 @@ import tempfile
 
 NAME = 'tunnelnest-rust'
 DEPS = {
-    'ubuntu-24.04': ['libc6', 'libgcc-s1', 'libstdc++6', 'libgtk-3-0t64', 'libwebkit2gtk-4.1-0', 'libssl3t64', 'libdbus-1-3', 'pkexec'],
-    'fedora-44': ['gtk3', 'webkit2gtk4.1', 'openssl-libs', 'dbus-libs', 'polkit'],
-    'arch': ['gtk3', 'webkit2gtk-4.1', 'openssl', 'dbus', 'polkit'],
+    'ubuntu-24.04': ['libc6', 'libgcc-s1', 'libstdc++6', 'libgtk-3-0t64', 'libwebkit2gtk-4.1-0', 'libssl3t64', 'libdbus-1-3', 'pkexec', 'iproute2'],
+    'fedora-44': ['gtk3', 'webkit2gtk4.1', 'openssl-libs', 'dbus-libs', 'polkit', 'iproute'],
+    'arch': ['gtk3', 'webkit2gtk-4.1', 'openssl', 'dbus', 'polkit', 'iproute2'],
 }
 
 

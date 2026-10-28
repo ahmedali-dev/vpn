@@ -61,10 +61,9 @@ async fn tauri_control_bridge_authenticates_and_restricts_api_requests() {
         axum::serve(listener, router(control)).await.unwrap();
     });
     let url = format!("http://{address}/#{token}").parse().unwrap();
-    assert_eq!(
-        request_control(&url, "status", None).await.unwrap()["state"],
-        "disconnected"
-    );
+    let status = request_control(&url, "status", None).await.unwrap();
+    assert_eq!(status["state"], "disconnected");
+    assert_eq!(status["version"], env!("CARGO_PKG_VERSION"));
     let profile = request_control(
         &url,
         "import",

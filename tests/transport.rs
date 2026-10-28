@@ -372,3 +372,94 @@ async fn tls_discovery_failure_retries_and_backoff_can_be_cancelled() {
     assert!(!snapshot.to_string().contains("secret"));
     fake.abort();
 }
+
+#[tokio::test]
+async fn configured_keepalives_survive_idle_and_detect_a_blackholed_transport() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let server = common::server().await;
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let upstream_port = server.port;
+    let paused = Arc::new(AtomicBool::new(false));
+    let pause = paused.clone();
+    let relay = tokio::spawn(async move {
+        let (mut client, _) = listener.accept().await.unwrap();
+        let mut header = Vec::new();
+        loop {
+            header.push(client.read_u8().await.unwrap());
+            if header.ends_with(b"\r\n\r\n") {
+                break;
+            }
+        }
+        let upstream = TcpStream::connect(("127.0.0.1", upstream_port))
+            .await
+            .unwrap();
+        client.write_all(b"HTTP/1.1 200 OK\r\n\r\n").await.unwrap();
+        let (mut cr, mut cw) = client.into_split();
+        let (mut sr, mut sw) = upstream.into_split();
+        async fn copy<R: tokio::io::AsyncRead + Unpin, W: tokio::io::AsyncWrite + Unpin>(
+            reader: &mut R,
+            writer: &mut W,
+            paused: Arc<AtomicBool>,
+        ) {
+            let mut data = [0; 4096];
+            loop {
+                let count = match reader.read(&mut data).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(count) => count,
+                };
+                while paused.load(Ordering::SeqCst) {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+                if writer.write_all(&data[..count]).await.is_err() {
+                    break;
+                }
+            }
+        }
+        tokio::join!(
+            copy(&mut cr, &mut sw, pause.clone()),
+            copy(&mut sr, &mut cw, pause)
+        );
+    });
+    let c = Config::parse(&[
+        "-H".into(),
+        "127.0.0.1".into(),
+        "-P".into(),
+        server.port.to_string(),
+        "-S".into(),
+        "localhost".into(),
+        "-u".into(),
+        "alice".into(),
+        "-p".into(),
+        "secret".into(),
+        "-ssh-host-key".into(),
+        server.ssh_fingerprint.clone(),
+        "-proxy".into(),
+        format!("http://127.0.0.1:{port}"),
+        "-ssh-keepalive-interval".into(),
+        "1".into(),
+        "-ssh-keepalive-max".into(),
+        "2".into(),
+        "-ssh-inactivity-timeout".into(),
+        "8".into(),
+    ])
+    .unwrap();
+    let ssh = transport::connect_ssh(
+        &c,
+        Some(&server.certificate_pin),
+        Arc::new(Mutex::new(None)),
+    )
+    .await
+    .unwrap();
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert!(!ssh.is_closed(), "idle session should answer keepalives");
+    paused.store(true, Ordering::SeqCst);
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while !ssh.is_closed() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("unresponsive transport should close after its keepalive budget");
+    relay.abort();
+}

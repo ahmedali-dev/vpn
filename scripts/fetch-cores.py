@@ -4,6 +4,8 @@ import concurrent.futures, hashlib, io, json, os, pathlib, tarfile, urllib.reque
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 VERSIONS = {'XTLS/Xray-core': 'v26.3.27', 'SagerNet/sing-box': 'v1.14.3'}
 TARGETS = {
+ 'darwin-arm64': ('Xray-macos-arm64-v8a.zip', 'sing-box-1.14.3-darwin-arm64.tar.gz'),
+ 'darwin-x64': ('Xray-macos-64.zip', 'sing-box-1.14.3-darwin-amd64.tar.gz'),
  'win32-x64': ('Xray-windows-64.zip', 'sing-box-1.14.3-windows-amd64.zip'),
  'linux-x64': ('Xray-linux-64.zip', 'sing-box-1.14.3-linux-amd64.tar.gz'),
 }

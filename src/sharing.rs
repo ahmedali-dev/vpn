@@ -42,10 +42,28 @@ pub const FLAGS: &[&str] = &[
     "-auto-route",
     "-ssh-trust-on-first-use",
     "-ssh-ipv4-only",
+    "-ssh-trust-on-first-use=false",
+    // Append only: flag indices are part of the portable profile wire format.
+    "-ssh-connect-timeout",
+    "-ssh-handshake-timeout",
+    "-ssh-channel-timeout",
+    "-ssh-keepalive-interval",
+    "-ssh-keepalive-max",
+    "-ssh-inactivity-timeout",
+    "-tun-mtu",
+    "-startup-timeout",
+    "-block-quic",
+    "-block-quic=false",
+    "-health-timeout",
 ];
 const MAX: usize = 65536;
 fn boolean(f: &str) -> bool {
-    BOOL_FLAGS.contains(&f.trim_start_matches('-'))
+    BOOL_FLAGS.contains(
+        &f.trim_start_matches('-')
+            .split('=')
+            .next()
+            .unwrap_or_default(),
+    )
 }
 pub fn validate(mut p: Profile) -> Result<Profile> {
     p.name = p.name.trim().into();
@@ -62,7 +80,8 @@ pub fn validate(mut p: Profile) -> Result<Profile> {
     while i < p.args.len() {
         let f = &p.args[i];
         ensure!(
-            FLAGS.contains(&f.as_str()) && seen.insert(f.clone()),
+            FLAGS.contains(&f.as_str())
+                && seen.insert(f.split('=').next().unwrap_or_default().to_owned()),
             "unsafe or duplicate shared option"
         );
         i += 1;

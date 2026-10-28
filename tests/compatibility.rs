@@ -216,3 +216,28 @@ fn vault_encryption_password_restart_and_session_credentials() {
         );
     }
 }
+
+#[test]
+fn explicit_session_trust_opt_out_is_portable_and_does_not_expose_session_credentials() {
+    let mut profile = ssh();
+    profile
+        .args
+        .insert(0, "-ssh-trust-on-first-use=false".into());
+    let encoded = sharing::encode(profile.clone(), "").unwrap();
+    let decoded = sharing::decode(&encoded, "").unwrap();
+    assert_eq!(decoded.args, profile.args);
+    assert!(
+        !Config::parse(&decoded.args)
+            .unwrap()
+            .boolean("ssh-trust-on-first-use")
+    );
+    let removed = tunnelnest::store::credentials_removed(&decoded.args);
+    assert!(
+        !removed
+            .iter()
+            .any(|value| value == "a-secret-password" || value == "alice")
+    );
+    let mut duplicate = profile;
+    duplicate.args.push("-ssh-trust-on-first-use".into());
+    assert!(sharing::validate(duplicate).is_err());
+}

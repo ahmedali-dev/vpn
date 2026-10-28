@@ -20,16 +20,16 @@ case "$expected" in
   ubuntu)
     [[ "${VERSION_ID:-}" == 24.04 ]] || fail 'Ubuntu packaging requires Ubuntu 24.04.'
     distro=ubuntu-24.04
-    packages=(git curl ca-certificates python3 build-essential pkg-config libssl-dev libdbus-1-dev libgtk-3-dev libwebkit2gtk-4.1-dev tar gzip unzip zstd dpkg-dev desktop-file-utils pkexec)
+    packages=(git curl ca-certificates python3 build-essential pkg-config libssl-dev libdbus-1-dev libgtk-3-dev libwebkit2gtk-4.1-dev tar gzip unzip zstd dpkg-dev desktop-file-utils pkexec iproute2)
     ;;
   fedora)
     [[ "${VERSION_ID:-}" == 44 ]] || fail 'Fedora packaging requires Fedora 44.'
     distro=fedora-44
-    packages=(git curl-minimal ca-certificates python3 gcc gcc-c++ make perl pkgconf-pkg-config openssl-devel dbus-devel gtk3-devel webkit2gtk4.1-devel tar gzip unzip zstd which rpm-build desktop-file-utils polkit)
+    packages=(git curl-minimal ca-certificates python3 gcc gcc-c++ make perl pkgconf-pkg-config openssl-devel dbus-devel gtk3-devel webkit2gtk4.1-devel tar gzip unzip zstd which rpm-build desktop-file-utils polkit iproute)
     ;;
   arch)
     distro=arch
-    packages=(git curl ca-certificates python base-devel pkgconf openssl dbus gtk3 webkit2gtk-4.1 tar gzip unzip zstd which desktop-file-utils polkit)
+    packages=(git curl ca-certificates python base-devel pkgconf openssl dbus gtk3 webkit2gtk-4.1 tar gzip unzip zstd which desktop-file-utils polkit iproute2)
     ;;
   *) fail 'Supported distributions: ubuntu, fedora, arch.' ;;
 esac

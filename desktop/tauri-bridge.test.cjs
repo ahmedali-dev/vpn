@@ -51,3 +51,11 @@ test('subframes do not receive the desktop bridge', () => {
   vm.runInNewContext(bridge, { window });
   assert.equal(window.tunnelDesktop, undefined);
 });
+
+
+test('native string errors become readable errors for connection feedback', async () => {
+  const window = { __TAURI__: { core: { invoke: async () => { throw 'Required networking core is missing'; } } } };
+  window.top = window;
+  vm.runInNewContext(bridge, { window });
+  await assert.rejects(window.tunnelDesktop.connectPrivileged(['-tun']), /Required networking core is missing/);
+});

@@ -284,7 +284,8 @@ async fn ssh_transport_logged(c: &Config, pin: Option<&str>, r: &Reporter) -> Re
         "INFO",
         "TCP",
         format!(
-            "Opening transport to {dial}:{port}; timeout=45s; upstream proxy={}",
+            "Opening transport to {dial}:{port}; timeout={}s; upstream proxy={}",
+            c.number("ssh-connect-timeout", 45)?,
             !c.get("proxy", "").is_empty()
         ),
     );
@@ -294,7 +295,10 @@ async fn ssh_transport_logged(c: &Config, pin: Option<&str>, r: &Reporter) -> Re
         let pp = u.port_or_known_default().unwrap();
         stream = Box::new(
             r.stage("Proxy TCP connection", async {
-                Ok(TcpStream::connect(authority(c.get("proxy-dial-address", ph), pp)).await?)
+                let stream =
+                    TcpStream::connect(authority(c.get("proxy-dial-address", ph), pp)).await?;
+                stream.set_nodelay(true)?;
+                Ok(stream)
             })
             .await?,
         );
@@ -340,7 +344,9 @@ async fn ssh_transport_logged(c: &Config, pin: Option<&str>, r: &Reporter) -> Re
     } else {
         stream = Box::new(
             r.stage("TCP connection", async {
-                Ok(TcpStream::connect(authority(dial, port)).await?)
+                let stream = TcpStream::connect(authority(dial, port)).await?;
+                stream.set_nodelay(true)?;
+                Ok(stream)
             })
             .await?,
         );
@@ -478,9 +484,12 @@ pub async fn connect_ssh_logged(
     r: Reporter,
 ) -> Result<client::Handle<HostVerifier>> {
     let started = std::time::Instant::now();
-    let stream = tokio::time::timeout(Duration::from_secs(45), ssh_transport_logged(c, pin, &r))
-        .await
-        .context("SSH transport timed out after 45s")??;
+    let stream = tokio::time::timeout(
+        Duration::from_secs(c.number("ssh-connect-timeout", 45)? as u64),
+        ssh_transport_logged(c, pin, &r),
+    )
+    .await
+    .context("SSH transport exceeded configured connection timeout")??;
     let known = c.flags.get("ssh-known-hosts").cloned().unwrap_or_else(|| {
         dirs::home_dir()
             .unwrap_or_default()
@@ -498,24 +507,30 @@ pub async fn connect_ssh_logged(
         report: Some(r.clone()),
     };
     let cfg = client::Config {
-        inactivity_timeout: Some(Duration::from_secs(90)),
-        keepalive_interval: Some(Duration::from_secs(15)),
-        keepalive_max: 3,
+        inactivity_timeout: match c.number("ssh-inactivity-timeout", 90)? {
+            0 => None,
+            n => Some(Duration::from_secs(n as u64)),
+        },
+        keepalive_interval: match c.number("ssh-keepalive-interval", 15)? {
+            0 => None,
+            n => Some(Duration::from_secs(n as u64)),
+        },
+        keepalive_max: c.number("ssh-keepalive-max", 3)? as usize,
         ..Default::default()
     };
     r.event(
         "INFO",
         "SSH",
-        "Starting SSH key exchange; handshake timeout=30s; keepalive=15s; missed keepalive limit=3",
+        format!("Starting SSH key exchange; handshake timeout={}s; keepalive={}s; missed keepalive limit={}",c.number("ssh-handshake-timeout",30)?,c.number("ssh-keepalive-interval",15)?,c.number("ssh-keepalive-max",3)?),
     );
     let mut session = r
         .stage("SSH key exchange", async {
             tokio::time::timeout(
-                Duration::from_secs(30),
+                Duration::from_secs(c.number("ssh-handshake-timeout", 30)? as u64),
                 client::connect_stream(Arc::new(cfg), stream, handler),
             )
             .await
-            .context("SSH key exchange timed out after 30s")?
+            .context("SSH key exchange exceeded configured handshake timeout")?
             .context("SSH key exchange or host-key verification failed")
         })
         .await?;
@@ -527,11 +542,11 @@ pub async fn connect_ssh_logged(
     let result = r
         .stage("SSH authentication", async {
             tokio::time::timeout(
-                Duration::from_secs(30),
+                Duration::from_secs(c.number("ssh-handshake-timeout", 30)? as u64),
                 session.authenticate_password(c.get("u", ""), c.get("p", "")),
             )
             .await
-            .context("SSH authentication timed out after 30s")?
+            .context("SSH authentication exceeded configured handshake timeout")?
             .context("SSH authentication exchange failed")
         })
         .await?;
