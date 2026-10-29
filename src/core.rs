@@ -74,7 +74,7 @@ pub fn xray_config(c: &Config, p: &Protocol, pin: Option<&str>) -> Value {
         _ => stream["tcpSettings"] = json!({"header":{"type":"none"}}),
     }
     if p.security == "tls" {
-        let mut tls = json!({"serverName":p.sni});
+        let mut tls = json!({"serverName":p.effective_sni});
         if let Some(pin) = pin {
             tls["pinnedPeerCertSha256"] = json!(pin);
         }
@@ -94,7 +94,7 @@ pub fn xray_config(c: &Config, p: &Protocol, pin: Option<&str>) -> Value {
         }
         stream["tlsSettings"] = tls;
     } else if p.security == "reality" {
-        stream["realitySettings"] = json!({"serverName":p.sni,"fingerprint":if p.fingerprint.is_empty(){"chrome"}else{&p.fingerprint},"password":p.reality_public_key,"shortId":p.reality_short_id,"show":false});
+        stream["realitySettings"] = json!({"serverName":p.effective_sni,"fingerprint":if p.fingerprint.is_empty(){"chrome"}else{&p.fingerprint},"password":p.reality_public_key,"shortId":p.reality_short_id,"show":false});
     }
     let mut config = json!({"log":{"loglevel":"info"},"inbounds":[{"listen":"127.0.0.1","port":c.socks_port(),"protocol":"socks","settings":{"auth":"noauth","udp":true}}],"outbounds":[{"protocol":p.protocol,"settings":settings,"streamSettings":stream},{"protocol":"freedom","tag":"direct"}],"routing":{"domainStrategy":"IPIfNonMatch","rules":[{"type":"field","outboundTag":"direct","domain":["geosite:private"]}]}});
     if c.boolean("block-quic") {
@@ -121,6 +121,20 @@ pub fn tun_config(c: &Config, excluded: &[String], platform: &str) -> Value {
     if c.boolean("block-quic") {
         rules.push(json!({"network":"udp","port":443,"action":"reject"}));
     }
+    let policy = c.routing_rules().expect("validated routing rules");
+    if policy
+        .iter()
+        .any(|r| r.kind == crate::routing::Match::Domain)
+    {
+        rules.insert(
+            1,
+            json!({"action":"sniff","sniffer":["http","tls","quic"],"timeout":"300ms"}),
+        );
+    }
+    rules.extend(crate::routing::core_rules(&policy, ssh));
+    if c.boolean("bypass-lan") {
+        rules.push(json!({"ip_is_private":true,"action":"route","outbound":"direct"}));
+    }
     if ssh {
         outbound["network"] = json!("tcp");
         rules.push(json!({"network":"udp","action":"reject"}));
@@ -132,7 +146,25 @@ pub fn tun_config(c: &Config, excluded: &[String], platform: &str) -> Value {
     } else {
         vec![]
     };
-    json!({"log":{"level":"info","timestamp":true},"inbounds":[inbound],"outbounds":[outbound],"dns":{"servers":[{"type":"tcp","tag":"tunnel-dns","server":"1.1.1.1","detour":"proxy"}],"rules":dns_rules,"final":"tunnel-dns","strategy":if ipv4{"ipv4_only"}else{"prefer_ipv4"}},"route":{"auto_detect_interface":true,"rules":rules,"final":"proxy"}})
+    let mut outbounds = vec![outbound];
+    if c.boolean("bypass-lan")
+        || policy
+            .iter()
+            .any(|r| r.action == crate::routing::Action::Direct)
+    {
+        outbounds.push(json!({"type":"direct","tag":"direct"}));
+    }
+    let mut config = json!({"log":{"level":"info","timestamp":true},"inbounds":[inbound],"outbounds":outbounds,"dns":{"servers":[{"type":"tcp","tag":"tunnel-dns","server":"1.1.1.1","detour":"proxy"}],"rules":dns_rules,"final":"tunnel-dns","strategy":if ipv4{"ipv4_only"}else{"prefer_ipv4"}},"route":{"auto_detect_interface":true,"rules":rules,"final":"proxy"}});
+    if !policy.is_empty() {
+        config["route"]["default_domain_resolver"] = json!("tunnel-dns");
+    }
+    if policy
+        .iter()
+        .any(|r| r.kind == crate::routing::Match::Domain)
+    {
+        config["dns"]["reverse_mapping"] = json!(true);
+    }
+    config
 }
 fn core_arguments(
     sing_box: bool,
@@ -154,6 +186,7 @@ pub struct CoreProcess {
     _config: Option<NamedTempFile>,
     started: std::time::Instant,
     pid: Option<u32>,
+    pub version: String,
 }
 impl CoreProcess {
     pub async fn start(
@@ -222,6 +255,25 @@ impl CoreProcess {
             )
             .context(PermanentFailure::Configuration));
         }
+        // Version metadata never includes the executable path or generated config.
+        let version = match tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            Command::new(&binary)
+                .arg(if v2ray_legacy { "-version" } else { "version" })
+                .kill_on_drop(true)
+                .output(),
+        )
+        .await
+        {
+            Ok(Ok(out)) if out.status.success() => String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .next()
+                .unwrap_or("unknown")
+                .chars()
+                .take(200)
+                .collect(),
+            _ => "unavailable".into(),
+        };
         let mut cmd = Command::new(binary);
         cmd.args(run)
             .arg(path)
@@ -235,15 +287,21 @@ impl CoreProcess {
             _config: file,
             started: std::time::Instant::now(),
             pid,
+            version,
         })
     }
     pub fn check_running(&mut self, name: &str) -> Result<()> {
         if let Some(status) = self.child().try_wait()? {
-            anyhow::bail!(
+            return Err(anyhow::anyhow!(
                 "{name} exited: {status}; PID={:?}; uptime={}ms",
                 self.pid,
                 self.started.elapsed().as_millis()
-            );
+            )
+            .context(if name.starts_with("TUN") {
+                crate::recovery::FailureCategory::Routing
+            } else {
+                crate::recovery::FailureCategory::Core
+            }));
         }
         Ok(())
     }

@@ -121,8 +121,8 @@ async fn invalid_core_configs_are_terminal_but_running_core_crashes_are_retryabl
     .await
     .unwrap();
     assert!(!permanent(&error));
-    assert!(error.to_string().contains("uptime="));
-    assert!(error.to_string().contains("PID="));
+    assert!(format!("{error:#}").contains("uptime="));
+    assert!(format!("{error:#}").contains("PID="));
     process.stop().await;
 }
 

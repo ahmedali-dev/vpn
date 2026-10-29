@@ -35,7 +35,8 @@ fn ssh() -> Profile {
 fn imports_transports_sni_and_ipv6() {
     let vmess=format!("vmess://{}",STANDARD.encode(serde_json::to_vec(&json!({"add":"server.example","port":443,"id":"uuid","net":"ws","tls":"tls","host":"cdn.example:443","path":"/ws","aid":"0","alpn":"h2,http/1.1"})).unwrap()));
     let p = Protocol::parse(&vmess).unwrap();
-    assert_eq!(p.sni, "cdn.example");
+    assert_eq!(p.sni, "");
+    assert_eq!(p.effective_sni, "cdn.example");
     assert_eq!(p.sni_source, "host");
     assert_eq!(p.alpn, vec!["h2", "http/1.1"]);
     let p=Protocol::parse("vless://uuid@[2001:db8::1]:443?security=reality&sni=cdn.example&pbk=pub&sid=ab&type=grpc&serviceName=a%2Fb&fp=chrome").unwrap();
@@ -45,7 +46,8 @@ fn imports_transports_sni_and_ipv6() {
     let p = Protocol::parse("trojan://p%40ss@host.example:443?type=ws&host=cdn.example").unwrap();
     assert_eq!(p.uuid, "p@ss");
     assert_eq!(p.security, "tls");
-    assert_eq!(p.sni, "host.example");
+    assert_eq!(p.sni, "");
+    assert_eq!(p.effective_sni, "host.example");
     let p =
         Protocol::parse("vless://uuid@host.example:443?security=tls&sni=explicit.example").unwrap();
     assert_eq!(p.sni, "explicit.example");
@@ -240,4 +242,72 @@ fn explicit_session_trust_opt_out_is_portable_and_does_not_expose_session_creden
     let mut duplicate = profile;
     duplicate.args.push("-ssh-trust-on-first-use".into());
     assert!(sharing::validate(duplicate).is_err());
+}
+
+#[test]
+fn imported_sni_stays_authored_while_runtime_fallback_is_separate() {
+    for (address, host, sni, expected, source) in [
+        ("fr2.vpnjantit.com", "", "", "fr2.vpnjantit.com", "server"),
+        (
+            "us-23.hihu.net",
+            "web.whatsapp.com",
+            "",
+            "web.whatsapp.com",
+            "host",
+        ),
+        (
+            "us-23.hihu.net",
+            "web.whatsapp.com",
+            "tls.example",
+            "tls.example",
+            "link",
+        ),
+    ] {
+        let link=format!("vmess://{}",STANDARD.encode(serde_json::to_vec(&json!({"add":address,"host":host,"sni":sni,"port":"443","id":"00000000-0000-0000-0000-000000000001","net":"ws","tls":"tls","path":"/vpnjantit","aid":"0"})).unwrap()));
+        let c = Config::parse(&args(&["-mode", "xray", "-v2ray-link", &link])).unwrap();
+        let mut p = c.protocol().unwrap();
+        assert_eq!(p.sni, sni);
+        assert_eq!(p.host, host);
+        assert_eq!(p.address, address);
+        assert_eq!(p.effective_sni, expected);
+        assert_eq!(p.sni_source, source);
+        p.finish().unwrap();
+        assert_eq!(p.sni, sni);
+        assert_eq!(p.effective_sni, expected);
+        let stream = xray_config(&c, &p, None)["outbounds"][0]["streamSettings"].clone();
+        assert_eq!(stream["tlsSettings"]["serverName"], expected);
+        if host.is_empty() {
+            assert!(stream["wsSettings"].get("headers").is_none());
+        } else {
+            assert_eq!(stream["wsSettings"]["headers"]["Host"], host);
+        }
+        let mut overridden = c.clone();
+        overridden
+            .flags
+            .insert("v2ray-sni".into(), "override.example".into());
+        assert_eq!(
+            overridden.protocol().unwrap().effective_sni,
+            "override.example"
+        );
+        overridden.flags.insert("v2ray-sni".into(), String::new());
+        assert_eq!(overridden.protocol().unwrap().sni, "");
+    }
+}
+#[test]
+fn canonical_arguments_preserve_explicit_boolean_opt_out() {
+    let c = Config::parse(&args(&[
+        "-ui",
+        "-ssh-trust-on-first-use=false",
+        "-block-quic=false",
+    ]))
+    .unwrap();
+    let normalized = c.canonical_args();
+    assert!(normalized.contains(&"-ssh-trust-on-first-use=false".into()));
+    assert!(normalized.contains(&"-block-quic=false".into()));
+    let mut profile = ssh();
+    profile
+        .args
+        .extend(args(&["-tun=false", "-ssh-ipv4-only=false"]));
+    let decoded = sharing::decode(&sharing::encode(profile.clone(), "").unwrap(), "").unwrap();
+    assert_eq!(decoded.args, profile.args);
 }

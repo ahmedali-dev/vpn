@@ -96,8 +96,14 @@ if [[ "$1" == -c ]]; then echo 1.3.0; fi''')
                 pathlib.Path(self.env['MOCK_STATE']).unlink()
                 pathlib.Path(self.env['MOCK_STATE'] + '.rust').unlink()
 
+    def test_arm64_ubuntu_uses_matching_core_and_package_target(self):
+        self.env['MOCK_MACHINE']='aarch64'
+        result=self.run_script()
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertIn('--target linux-arm64',self.log.read_text())
+
     def test_unsupported_architecture_and_wrong_distro_stop_before_installation(self):
-        self.env['MOCK_MACHINE'] = 'aarch64'
+        self.env['MOCK_MACHINE'] = 'i686'
         result = self.run_script()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('x86_64', result.stderr)

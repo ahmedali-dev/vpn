@@ -29,6 +29,8 @@ pub struct Status {
     pub log_session: String,
     pub connection: Value,
     pub health: Value,
+    pub cores: Value,
+    pub checks: Value,
     pub recovery: Value,
     pub traffic: crate::traffic::TrafficErrors,
     pub probe_requested: Arc<tokio::sync::Notify>,
@@ -137,7 +139,15 @@ impl Reporter {
     ) -> Result<T> {
         let start = std::time::Instant::now();
         self.event("INFO", "STAGE", format!("{name} started"));
-        let result = work.await;
+        let result = work.await.map_err(|e| {
+            if e.downcast_ref::<crate::recovery::FailureCategory>()
+                .is_some()
+            {
+                e
+            } else {
+                e.context(crate::recovery::stage_category(name))
+            }
+        });
         let elapsed = start.elapsed().as_millis() as u64;
         self.event(
             if result.is_ok() { "INFO" } else { "WARN" },
@@ -155,8 +165,7 @@ impl Reporter {
         if !status.recovery.is_object() {
             status.recovery = json!({});
         }
-        status.recovery["lastStage"] =
-            json!({"name":name,"durationMs":elapsed,"success":result.is_ok()});
+        status.recovery["lastStage"] = json!({"name":name,"durationMs":elapsed,"success":result.is_ok(),"category":result.as_ref().err().map(crate::recovery::category)});
         result
     }
     fn connected(&self) {
@@ -179,6 +188,10 @@ impl Reporter {
             status.recovery["recoveryMs"] = json!(recovery);
             status.recovery["recoveryStartedAt"] = Value::Null;
             status.recovery["nextRetryAt"] = Value::Null;
+            if status.recovery["lastFailure"].is_object() {
+                status.recovery["lastFailure"]["recoveredAt"] = json!(now.to_rfc3339());
+            }
+            status.error.clear();
             (startup, recovery)
         };
         self.event(
@@ -209,9 +222,16 @@ impl Reporter {
             notify.notify_one();
         }
     }
+    fn core_version(&self, role: &str, core: &CoreProcess) {
+        let mut s = self.0.lock().unwrap();
+        if !s.cores.is_object() {
+            s.cores = json!({});
+        }
+        s.cores[role] = json!({"version":s.redactor.clean(&core.version)});
+    }
     pub fn snapshot(&self) -> Value {
         let s = self.0.lock().unwrap();
-        json!({"state":s.state,"error":s.error,"logs":s.logs,"logSession":s.log_session,"logStart":s.log_end.saturating_sub(s.logs.len() as u64),"logEnd":s.log_end,"connection":s.connection,"health":s.health,"recovery":s.recovery,"transportErrors":s.traffic.snapshot(std::time::Instant::now()),"administrator":is_admin(),"logFile":s.log_file.as_ref().map(|f|f.path.file_name().unwrap_or_default().to_string_lossy()),"logError":s.log_error})
+        json!({"state":s.state,"error":s.error,"logs":s.logs,"logSession":s.log_session,"logStart":s.log_end.saturating_sub(s.logs.len() as u64),"logEnd":s.log_end,"connection":s.connection,"health":s.health,"cores":s.cores,"checks":s.checks,"recovery":s.recovery,"transportErrors":s.traffic.snapshot(std::time::Instant::now()),"administrator":is_admin(),"logFile":s.log_file.as_ref().map(|f|f.path.file_name().unwrap_or_default().to_string_lossy()),"logError":s.log_error})
     }
 }
 pub fn is_admin() -> bool {
@@ -255,7 +275,11 @@ impl Session {
                     status.recovery["nextRetryAt"] = Value::Null;
                 }
             }
-            if c.is_cancelled() {
+            if c.is_cancelled()
+                && !result.as_ref().err().is_some_and(|e| {
+                    crate::recovery::category(e) == crate::recovery::FailureCategory::Cleanup
+                })
+            {
                 r.state("disconnected");
                 r.health("disconnected", "");
             } else if let Err(e) = result {
@@ -263,6 +287,10 @@ impl Session {
                 r.event("ERROR", "SESSION", &message);
                 r.health("failed", &message);
                 let mut s = r.0.lock().unwrap();
+                if !s.recovery.is_object() {
+                    s.recovery = json!({});
+                }
+                s.recovery["lastFailure"] = json!({"reason":message,"terminal":permanent(&e),"category":crate::recovery::category(&e),"at":chrono::Utc::now().to_rfc3339()});
                 s.error = message;
                 s.state = "error".into();
             } else {
@@ -297,8 +325,17 @@ impl Session {
             );
             self.task.abort();
             let _ = (&mut self.task).await;
+            let mut status = self.report.0.lock().unwrap();
+            let reason = "Shutdown timed out; networking cleanup is not verified. Inspect adapters and routes before reconnecting.";
+            status.error = reason.into();
+            status.state = "error".into();
+            status.recovery["lastFailure"] =
+                json!({"category":"cleanup","reason":reason,"terminal":true});
+            return;
         }
-        self.report.state("disconnected");
+        if self.report.snapshot()["state"] != "error" {
+            self.report.state("disconnected");
+        }
     }
 }
 impl Drop for Session {
@@ -389,7 +426,7 @@ async fn run(mut c: Config, cancel: CancellationToken, r: Reporter) -> Result<()
         (
             p.address,
             p.port as u16,
-            p.sni,
+            p.effective_sni,
             if p.security == "tls" {
                 c.get("v2ray-cert-sha256", "auto")
             } else {
@@ -409,6 +446,20 @@ async fn run(mut c: Config, cancel: CancellationToken, r: Reporter) -> Result<()
     };
     r.0.lock().unwrap().connection =
         json!({"server":transport::authority(&host,port),"sni":sni,"mode":c.mode()});
+    r.event(
+        "INFO",
+        "ROUTING",
+        format!(
+            "Device routing policy: {} rule(s), LAN bypass={}; {}",
+            c.routing_rules()?.len(),
+            c.boolean("bypass-lan"),
+            if c.tun() {
+                "active in full-device mode"
+            } else {
+                "inactive in proxy mode"
+            }
+        ),
+    );
     // Explicit compatibility pins survive restarts for this connection session only.
     let mut compatibility_pin = None;
     let tofu_key = Arc::new(Mutex::new(None));
@@ -439,6 +490,7 @@ async fn run(mut c: Config, cancel: CancellationToken, r: Reporter) -> Result<()
             "reconnecting"
         });
         r.health("connecting", "");
+        r.0.lock().unwrap().checks = json!({"proxyHttps":"pending","systemDns":if c.tun(){"pending"}else{"not_applicable"},"systemIpv4":if c.tun(){"pending"}else{"not_applicable"},"ipv6":"not_verified"});
         {
             let mut status = r.0.lock().unwrap();
             if !status.recovery.is_object() {
@@ -473,7 +525,15 @@ async fn run(mut c: Config, cancel: CancellationToken, r: Reporter) -> Result<()
             run_once(&c, &excluded, pin.as_deref(), attempt_cancel.clone(), r.clone(), tofu_key.clone(), &mut connected_for).await
         }.await;
         if cancel.is_cancelled() {
-            return Ok(());
+            return match result {
+                Err(e)
+                    if crate::recovery::category(&e)
+                        == crate::recovery::FailureCategory::Cleanup =>
+                {
+                    Err(e)
+                }
+                _ => Ok(()),
+            };
         }
         let result =
             if attempt_cancel.is_cancelled() && !result.as_ref().err().is_some_and(permanent) {
@@ -515,8 +575,7 @@ async fn run(mut c: Config, cancel: CancellationToken, r: Reporter) -> Result<()
                 .chars()
                 .take(4000)
                 .collect();
-            status.recovery["lastFailure"] =
-                json!({"reason":reason,"terminal":terminal,"at":chrono::Utc::now().to_rfc3339()});
+            status.recovery["lastFailure"] = json!({"reason":reason,"terminal":terminal,"category":crate::recovery::category(&error),"at":chrono::Utc::now().to_rfc3339()});
             status.recovery["consecutiveFailures"] = json!(retries.failures());
             if status.recovery["recoveryStartedAt"].is_null() {
                 status.recovery["recoveryStartedAt"] = json!(chrono::Utc::now().to_rfc3339());
@@ -691,10 +750,12 @@ async fn run_once(
         );
         jobs.spawn(pac_server(pac, c.socks_port()));
     }
+    let mut log_jobs = JoinSet::new();
     let mut core = None;
     let mut ssh = None;
     let mut tun = None;
     let mut tun_started = false;
+    let observed_interface = Arc::new(Mutex::new(None));
     let mut connected_at = None;
     let outcome=async {
     if c.mode()=="ssh" {
@@ -705,31 +766,53 @@ async fn run_once(
         let names=if c.mode()=="v2ray"{vec!["v2ray","xray"]}else{vec!["xray"]};
         let binary=find_core(c.get("v2ray-binary",""),&names)?;
         let generated=if c.get("v2ray-config","").is_empty(){Some(xray_config(c,&c.protocol()?,pin))}else{None};
-        let mut p=tokio::select!{_=cancel.cancelled()=>return Ok(()),p=r.stage("Core startup", CoreProcess::start(binary,generated,c.get("v2ray-config",""),false))=>p?};r.event("INFO","CORE",format!("Started core; PID={:?}",p.child().id()));capture(&mut p,&r,&mut jobs,"CORE");core=Some(p);
+        let mut p=tokio::select!{_=cancel.cancelled()=>return Ok(()),p=r.stage("Core startup", CoreProcess::start(binary,generated,c.get("v2ray-config",""),false))=>p?};r.event("INFO","CORE",format!("Started core; PID={:?}",p.child().id()));r.core_version("proxy",&p);capture(&mut p,&r,&mut log_jobs,"CORE");core=Some(p);
         let ready=wait_ready(cancel.clone(),Duration::from_secs(c.number("startup-timeout",30)? as u64),
             ||core.as_mut().unwrap().check_running("core during startup"),
             ||async {Ok(TcpStream::connect(("127.0.0.1",c.socks_port())).await.is_ok())}).await?;
         if !ready {return Ok(());}
 
     }
-    tokio::select!{_=cancel.cancelled()=>return Ok(()),v=r.stage("Proxy verification", verify_with_timeout(Some(c.socks_port()),Some(&r),health_timeout))=>v.context("proxy connectivity verification failed")?};
+    r.state("verifying");
+    let verified = startup_work(cancel.clone(), || {
+        if let Some(p)=core.as_mut(){p.check_running("core during verification")?;}
+        if let Some(s)=&ssh {ensure!(!s.is_closed(), "SSH session closed during verification");}
+        Ok(())
+    },r.stage("Proxy verification", verify_with_timeout(Some(c.socks_port()),Some(&r),health_timeout))).await?;
+    if verified.is_none(){return Ok(());}
+    r.0.lock().unwrap().checks["proxyHttps"]=json!("passed");
     r.log("[+] HTTPS traffic verified through SOCKS");
-    let expected_exit=if c.tun(){Some(tokio::select!{_=cancel.cancelled()=>return Ok(()),v=exit_ip(Some(c.socks_port()),health_timeout)=>v.context("could not determine proxy IPv4 exit")?})}else{None};
+    let expected_exit=if c.tun(){
+        let value=startup_work(cancel.clone(),||{
+            if let Some(p)=core.as_mut(){p.check_running("core during exit verification")?;}
+            if let Some(s)=&ssh{ensure!(!s.is_closed(),"SSH session closed during exit verification");}
+            Ok(())
+        },exit_ip(Some(c.socks_port()),health_timeout)).await.context("could not determine proxy IPv4 exit")?;
+        if value.is_none(){return Ok(());}value
+    }else{None};
     if c.tun(){
         if crate::network::tun_present().await? {return Err(anyhow::anyhow!("TUN address 172.30.111.1 is already in use; disconnect the other tunnel first").context(crate::recovery::PermanentFailure::Configuration));}
         if c.mode()=="ssh" && c.boolean("ssh-ipv4-only") {
             r.event("INFO","TUN","IPv4 compatibility: filtering AAAA/HTTPS/SVCB DNS responses; cached IPv6 TLS/HTTP destinations use hostname recovery; other IPv6 traffic stays blocked. SSH carries TCP; UDP applications are unsupported.");
         }
         let mut p=tokio::select!{_=cancel.cancelled()=>return Ok(()),p=r.stage("TUN startup", CoreProcess::start(find_core(c.get("tun-binary",""),&["sing-box"] )?,Some(tun_config(c,excluded,std::env::consts::OS)),"",true))=>p?};
-        r.event("INFO","TUN",format!("Starting sing-box; PID={:?}; excluded upstream routes={}",p.child().id(),excluded.len()));capture(&mut p,&r,&mut jobs,"TUN");tun=Some(p);tun_started=true;
+        r.event("INFO","TUN",format!("Starting sing-box; PID={:?}; excluded upstream routes={}",p.child().id(),excluded.len()));r.core_version("tun",&p);capture(&mut p,&r,&mut log_jobs,"TUN");tun=Some(p);tun_started=true;
         let ready=r.stage("TUN interface and route readiness",wait_ready(cancel.clone(),
             Duration::from_secs(c.number("startup-timeout",30)? as u64),
-            ||tun.as_mut().unwrap().check_running("TUN during startup"),
+            ||{
+                tun.as_mut().unwrap().check_running("TUN during startup")?;
+                if let Some(p)=core.as_mut(){p.check_running("core during TUN startup")?;}
+                if let Some(s)=&ssh{ensure!(!s.is_closed(),"SSH session closed during TUN startup");}
+                Ok(())
+            },
             ||async {
-                if !crate::network::tun_present().await? {return Ok(false);}
+                match crate::network::tun_interface().await? {Some(name)=>*observed_interface.lock().unwrap()=Some(name),None=>return Ok(false)}
+                verify_system_dns(health_timeout).await?;
+                r.0.lock().unwrap().checks["systemDns"]=json!("passed");
                 let actual=exit_ip(None,health_timeout).await?;
                 matching_exit(expected_exit.unwrap(),actual)?;
-                r.event("INFO","TUN",format!("System IPv4 exit {actual} matches verified proxy exit"));
+                r.0.lock().unwrap().checks["systemIpv4"]=json!("passed");
+                r.event("INFO","TUN",format!("System DNS works and IPv4 exit {actual} matches verified proxy exit; IPv6 is captured but not independently verified"));
                 Ok(true)
             })).await?;
         if !ready {return Ok(());}
@@ -749,6 +832,7 @@ async fn run_once(
                     let report=r.clone();
                     async move {
                         if full_device {
+                            verify_system_dns(health_timeout).await?;
                             let proxy=exit_ip(Some(port),health_timeout).await.context("proxy exit check failed")?;
                             let system=exit_ip(None,health_timeout).await.context("system exit check failed")?;
                             matching_exit(proxy,system)?;
@@ -761,6 +845,14 @@ async fn run_once(
     *connected_for = connected_at
         .map(|at: std::time::Instant| at.elapsed())
         .unwrap_or_default();
+    let owned_interface = if tun_started {
+        match crate::network::tun_interface().await {
+            Ok(None) => Ok(observed_interface.lock().unwrap().clone()),
+            other => other,
+        }
+    } else {
+        Ok(None)
+    };
     if let Some(p) = tun.as_mut() {
         p.stop().await;
     }
@@ -774,12 +866,21 @@ async fn run_once(
     }
     jobs.abort_all();
     while jobs.join_next().await.is_some() {}
+    finish_core_logs(&mut log_jobs, &r).await;
     let mut cleanup_verified = true;
     if tun_started {
         // Allow asynchronous adapter removal, but never delete another app's routes.
         let check = async {
             for _ in 0..10 {
                 if !crate::network::tun_present().await? {
+                    if let Ok(Some(interface)) = &owned_interface {
+                        if crate::network::tun_routes_present(interface).await? {
+                            tokio::time::sleep(Duration::from_millis(100)).await;
+                            continue;
+                        }
+                    } else if owned_interface.is_err() {
+                        return Ok(false);
+                    }
                     return Ok::<_, anyhow::Error>(true);
                 }
                 tokio::time::sleep(Duration::from_millis(100)).await;
@@ -792,7 +893,7 @@ async fn run_once(
         );
         cleanup_verified = removed;
         r.0.lock().unwrap().recovery["tunCleanupVerified"] = json!(removed);
-        r.event(if removed {"INFO"}else{"WARN"},"CLEANUP",if removed {"TUN interface removal verified"} else {"TUN cleanup could not be verified; inspect remaining adapter/routes before reconnecting"});
+        r.event(if removed {"INFO"}else{"WARN"},"CLEANUP",if removed {"TUN interface and owned route removal verified"} else {"TUN cleanup could not be verified; inspect remaining adapter/routes before reconnecting"});
     }
     r.event(
         "INFO",
@@ -803,9 +904,79 @@ async fn run_once(
         return Err(anyhow::anyhow!(
             "TUN cleanup could not be verified; refusing to install a new set of routes"
         )
-        .context(crate::recovery::PermanentFailure::Configuration));
+        .context(crate::recovery::PermanentFailure::Configuration)
+        .context(crate::recovery::FailureCategory::Cleanup));
     }
     outcome
+}
+// Processes are stopped first; allow their stdout/stderr readers to reach EOF.
+async fn finish_core_logs(jobs: &mut JoinSet<()>, r: &Reporter) {
+    if tokio::time::timeout(Duration::from_secs(1), async {
+        while jobs.join_next().await.is_some() {}
+    })
+    .await
+    .is_err()
+    {
+        r.event(
+            "WARN",
+            "CORE",
+            "Core log drain deadline exceeded; remaining output readers cancelled",
+        );
+        jobs.abort_all();
+        while jobs.join_next().await.is_some() {}
+    }
+}
+async fn startup_work<T, F, Fut>(
+    cancel: CancellationToken,
+    mut alive: F,
+    work: Fut,
+) -> Result<Option<T>>
+where
+    F: FnMut() -> Result<()>,
+    Fut: std::future::Future<Output = Result<T>>,
+{
+    tokio::pin!(work);
+    let mut tick = tokio::time::interval(Duration::from_millis(100));
+    loop {
+        tokio::select! { biased;
+            _=cancel.cancelled()=>return Ok(None),
+            _=tick.tick()=>alive()?,
+            result=&mut work=>return result.map(Some),
+        }
+    }
+}
+async fn verify_system_dns(timeout: Duration) -> Result<()> {
+    let work = async {
+        let mut jobs = JoinSet::new();
+        for host in ["api.ipify.org", "www.cloudflare.com"] {
+            jobs.spawn(async move {
+                let mut values = lookup_host((host, 443)).await?;
+                ensure!(
+                    values.any(|a| !a.ip().is_unspecified() && !a.ip().is_loopback()),
+                    "{host}: no usable DNS addresses"
+                );
+                Ok::<_, anyhow::Error>(())
+            });
+        }
+        let mut errors = Vec::new();
+        while let Some(result) = jobs.join_next().await {
+            match result {
+                Ok(Ok(())) => {
+                    jobs.abort_all();
+                    while jobs.join_next().await.is_some() {}
+                    return Ok(());
+                }
+                Ok(Err(e)) => errors.push(e.to_string()),
+                Err(e) => errors.push(e.to_string()),
+            }
+        }
+        bail!("System DNS resolution failed: {}", errors.join("; "))
+    };
+    tokio::time::timeout(timeout, work)
+        .await
+        .context("System DNS verification timed out")
+        .context(crate::recovery::FailureCategory::Dns)?
+        .map_err(|e| e.context(crate::recovery::FailureCategory::Dns))
 }
 async fn wait_ready<F, P, Fut>(
     cancel: CancellationToken,
@@ -832,14 +1003,14 @@ where
     ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let timeout = tokio::time::sleep(deadline);
     tokio::pin!(timeout);
-    let mut last_error = String::new();
+    let mut last_error = None;
     loop {
         tokio::select! {
             _=cancel.cancelled()=>return Ok(false),
-            _=&mut timeout=>bail!("readiness deadline exceeded after {}s: {}",deadline.as_secs(),last_error),
+            _=&mut timeout=>return Err(last_error.take().unwrap_or_else(||anyhow::anyhow!("service is not ready")).context(format!("readiness deadline exceeded after {}s",deadline.as_secs()))),
             _=ticks.tick()=>alive()?,
             result=&mut work=>{
-                match result {Ok(true)=>return Ok(true),Ok(false)=>(),Err(error)=>last_error=format!("{error:#}")}
+                match result {Ok(true)=>return Ok(true),Ok(false)=>(),Err(error)=>last_error=Some(error)}
                 work=Box::pin(check(true,probe()));
             }
         }
@@ -1714,5 +1885,123 @@ mod verification_tests {
                 .contains("[WARN] [CORE/STDOUT]")
         );
         assert!(!r.snapshot()["logs"].as_str().unwrap().contains("[ERROR]"));
+    }
+}
+
+#[cfg(test)]
+mod startup_guard_tests {
+    use super::*;
+    #[tokio::test]
+    async fn core_exit_interrupts_a_pending_verification_and_cancellation_is_not_success() {
+        let started = std::time::Instant::now();
+        let result = startup_work(
+            CancellationToken::new(),
+            || Err(anyhow::anyhow!("core exited").context(crate::recovery::FailureCategory::Core)),
+            std::future::pending::<Result<()>>(),
+        )
+        .await;
+        assert_eq!(
+            crate::recovery::category(&result.unwrap_err()),
+            crate::recovery::FailureCategory::Core
+        );
+        assert!(started.elapsed() < Duration::from_secs(1));
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        assert!(
+            startup_work(cancel, || Ok(()), async { Ok(()) })
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+    #[tokio::test]
+    async fn readiness_preserves_dns_origin_through_the_deadline_and_outer_stage() {
+        let report = Reporter::default();
+        let error = report
+            .stage(
+                "TUN interface and route readiness",
+                wait_ready(
+                    CancellationToken::new(),
+                    Duration::from_millis(20),
+                    || Ok(()),
+                    || async {
+                        Err(anyhow::anyhow!("system DNS failed")
+                            .context(crate::recovery::FailureCategory::Dns))
+                    },
+                ),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(
+            crate::recovery::category(&error),
+            crate::recovery::FailureCategory::Dns
+        );
+        assert_eq!(
+            report.snapshot()["recovery"]["lastStage"]["category"],
+            "dns"
+        );
+    }
+    #[tokio::test]
+    async fn verification_result_and_failure_are_preserved() {
+        assert_eq!(
+            startup_work(CancellationToken::new(), || Ok(()), async { Ok(42) })
+                .await
+                .unwrap(),
+            Some(42)
+        );
+        let error = startup_work(CancellationToken::new(), || Ok(()), async {
+            Err::<(), _>(
+                anyhow::anyhow!("DNS failed").context(crate::recovery::FailureCategory::Dns),
+            )
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(
+            crate::recovery::category(&error),
+            crate::recovery::FailureCategory::Dns
+        );
+    }
+}
+
+#[cfg(test)]
+mod recovered_failure_tests {
+    use super::*;
+    #[test]
+    fn successful_retry_marks_historical_failure_recovered_without_erasing_diagnostics() {
+        let r = Reporter::default();
+        r.0.lock().unwrap().recovery =
+            json!({"lastFailure":{"category":"routing","reason":"TUN exited: exit status 0"}});
+        r.connected();
+        let status = r.snapshot();
+        assert_eq!(status["state"], "connected");
+        assert_eq!(status["health"]["state"], "healthy");
+        assert!(status["recovery"]["lastFailure"]["recoveredAt"].is_string());
+        assert_eq!(
+            status["recovery"]["lastFailure"]["reason"],
+            "TUN exited: exit status 0"
+        );
+    }
+    #[tokio::test]
+    async fn final_core_output_is_drained_before_cleanup_finishes() {
+        let r = Reporter::default();
+        let (reader, mut writer) = tokio::io::duplex(1024);
+        let mut jobs = JoinSet::new();
+        jobs.spawn(pipe_log(reader, r.clone(), "TUN/STDERR"));
+        let write = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            writer
+                .write_all(b"final TUN shutdown detail\n")
+                .await
+                .unwrap();
+        });
+        finish_core_logs(&mut jobs, &r).await;
+        write.await.unwrap();
+        assert!(
+            r.snapshot()["logs"]
+                .as_str()
+                .unwrap()
+                .contains("final TUN shutdown detail")
+        );
+        assert!(jobs.is_empty());
     }
 }

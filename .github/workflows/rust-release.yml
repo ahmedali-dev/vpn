@@ -2,7 +2,9 @@ name: TunnelNest Rust Release
 
 on:
   workflow_dispatch:
+  pull_request:
   push:
+    branches: [main]
     tags:
       - 'rust-v*'
 
@@ -28,6 +30,10 @@ jobs:
             target: linux-x64
             runner: ubuntu-24.04
             image: ubuntu:24.04
+          - distro: ubuntu-24.04
+            target: linux-arm64
+            runner: ubuntu-24.04-arm
+            image: ubuntu:24.04
           - distro: fedora-44
             target: linux-x64
             runner: ubuntu-24.04
@@ -41,6 +47,7 @@ jobs:
         shell: bash
         working-directory: .
     env:
+      TUNNELNEST_REQUIRE_CORES: '1'
       CARGO_TERM_COLOR: always
       CARGO_HOME: /opt/tunnelnest/cargo
       RUSTUP_HOME: /opt/tunnelnest/rustup
@@ -59,7 +66,7 @@ jobs:
             ubuntu-24.04)
               export DEBIAN_FRONTEND=noninteractive
               apt-get update
-              apt-get install -y --no-install-recommends git curl ca-certificates python3 build-essential pkg-config libssl-dev libdbus-1-dev libgtk-3-dev libwebkit2gtk-4.1-dev tar gzip unzip dpkg-dev desktop-file-utils
+              apt-get install -y --no-install-recommends git curl ca-certificates python3 build-essential pkg-config libssl-dev libdbus-1-dev libgtk-3-dev libwebkit2gtk-4.1-dev iproute2 tar gzip unzip dpkg-dev desktop-file-utils
               ;;
             fedora-44)
               dnf install -y git curl-minimal ca-certificates python3 gcc gcc-c++ make perl pkgconf-pkg-config openssl-devel dbus-devel gtk3-devel webkit2gtk4.1-devel tar gzip unzip which rpm-build desktop-file-utils
@@ -141,6 +148,7 @@ jobs:
         shell: bash
         working-directory: .
     env:
+      TUNNELNEST_REQUIRE_CORES: '1'
       CARGO_TERM_COLOR: always
       TUNNEL_PACKAGE_TARGET: win32-x64
       GH_TOKEN: ${{ github.token }}
@@ -191,6 +199,11 @@ jobs:
           node --test desktop/*.test.cjs
       - name: Build native application
         run: python3 scripts/build.py
+      - name: Smoke-test packaged Windows executables
+        run: |
+          dist/runtime/win32-x64/tunnel.exe --help
+          dist/runtime/win32-x64/cores/sing-box.exe version
+          dist/runtime/win32-x64/cores/xray.exe version
       - name: Package native application and networking cores
         run: python3 scripts/archive.py --target "$TUNNEL_PACKAGE_TARGET" --version "$RELEASE_VERSION"
       - uses: actions/upload-artifact@v4
@@ -200,10 +213,69 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  build-macos:
+    name: Build macOS ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            target: darwin-arm64
+          - runner: macos-15-intel
+            target: darwin-x64
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TUNNELNEST_REQUIRE_CORES: '1'
+      TUNNEL_PACKAGE_TARGET: ${{ matrix.target }}
+      OPENSSL_STATIC: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install native build prerequisites
+        run: |
+          brew install openssl@3 pkg-config
+          echo "OPENSSL_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+          rustup default stable
+      - name: Validate version
+        run: |
+          version="$(python3 -c 'from scripts.version import package_version; from pathlib import Path; print(package_version(Path("Cargo.toml").read_text()))')"
+          if [[ "$GITHUB_REF" == refs/tags/rust-v* ]]; then version="${GITHUB_REF_NAME#rust-v}"; fi
+          python3 scripts/version.py "$version" --check
+      - name: Fetch matching verified cores
+        run: python3 scripts/fetch-cores.py
+      - name: Check Rust and test engine, routing, and core schemas
+        run: |
+          cargo fmt --all --check
+          cargo clippy --locked --all-targets --features desktop -- -D warnings
+          cargo test --locked --features desktop
+      - name: Test interface and packaging tools
+        run: |
+          npm ci --prefix desktop --ignore-scripts --no-audit --no-fund
+          node --test desktop/*.test.cjs
+          python3 -m unittest discover -s scripts -p 'test_*.py' -v
+      - name: Package app and matching cores
+        run: bash scripts/build_for_macos.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rust-${{ matrix.target }}
+          path: |
+            dist/macos/*.zip
+            dist/macos/*.sha256
+          if-no-files-found: error
+          retention-days: 14
+
   publish:
     name: Publish GitHub release
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/rust-v')
-    needs: [build-linux, build-windows]
+    needs: [build-linux, build-windows, build-macos]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -223,7 +295,7 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
           checksums=(*.sha256)
-          test "${#checksums[@]}" -eq 7
+          test "${#checksums[@]}" -eq 11
           for checksum in "${checksums[@]}"; do sha256sum --check "$checksum"; done
           cat "${checksums[@]}" > SHA256SUMS.txt
           rm -- "${checksums[@]}"
@@ -238,9 +310,9 @@ jobs:
             cat > "$notes" <<NOTES
           TunnelNest Rust $version
 
-          Native Rust desktop and CLI builds: Windows x64 ZIP, Ubuntu 24.04 x64 DEB, Fedora 44 x64 RPM, and Arch Linux x64 pkg.tar.zst. Portable Linux tarballs are also included. Every package includes Xray and sing-box plus their licenses. Verify downloads against SHA256SUMS.txt. All builds require an x86_64/AMD64 machine; ARM64 and 32-bit systems are excluded.
+          Native Rust desktop and CLI builds: Windows x64 ZIP, Ubuntu 24.04 x64 DEB, Fedora 44 x64 RPM, and Arch Linux x64 pkg.tar.zst. Portable Linux tarballs are also included. Every package includes Xray and sing-box plus their licenses. Verify downloads against SHA256SUMS.txt. Matching macOS ARM64/Intel app bundles and Ubuntu 24.04 ARM64 DEB/portable builds are also included. Windows, Fedora, and Arch packages target x86_64; 32-bit builds are excluded.
 
-          Builds are unsigned. Windows requires WebView2. Each Linux archive is built inside its named distribution and needs that distribution's GTK 3, WebKitGTK 4.1, OpenSSL, and D-Bus runtime libraries. Arch builds target the rolling release at build time. Live VPN connections, native authorization, and actual TUN routing require platform testing. Existing Go profiles can be transferred using shared profile codes/files.
+          Builds are unsigned or locally ad-hoc signed; macOS distributions are not notarized. Windows requires WebView2. Each Linux archive is built inside its named distribution and needs that distribution's GTK 3, WebKitGTK 4.1, OpenSSL, and D-Bus runtime libraries. Arch builds target the rolling release at build time. Live VPN connections, native authorization, and actual TUN routing require platform testing. Existing Go profiles can be transferred using shared profile codes/files.
           NOTES
           fi
           # A failed upload leaves a draft. A rerun resumes it; published releases

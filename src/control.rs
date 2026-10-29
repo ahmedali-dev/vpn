@@ -511,9 +511,7 @@ async fn api(c: Arc<Control>, path: &str, req: Request) -> Result<Value> {
         }
         "/api/diagnostics" => {
             let s = c.status().await?;
-            return Ok(
-                json!({"engine":"rust","version":env!("CARGO_PKG_VERSION"),"platform":std::env::consts::OS,"arch":std::env::consts::ARCH,"state":s["state"],"health":s["health"],"recovery":s["recovery"],"transportErrors":s["transportErrors"],"administrator":is_admin()}),
-            );
+            return Ok(diagnostics(&s));
         }
         "/api/vault/status" => {
             return Ok(c
@@ -732,6 +730,28 @@ pub async fn serve_with_ready(
     }
     result?;
     Ok(())
+}
+
+/// Deliberate allowlist: never export profile arguments, paths, or credentials.
+pub fn diagnostics(status: &Value) -> Value {
+    fn clean(value: Value) -> Value {
+        match value {
+            Value::String(s) => Value::String(logging::Redactor::default().clean(&s)),
+            Value::Array(a) => Value::Array(a.into_iter().map(clean).collect()),
+            Value::Object(m) => Value::Object(m.into_iter().map(|(k, v)| (k, clean(v))).collect()),
+            v => v,
+        }
+    }
+    let logs = status["logs"].as_str().unwrap_or("");
+    let tail = logs
+        .char_indices()
+        .rev()
+        .nth(16000)
+        .map(|(i, _)| &logs[i..])
+        .unwrap_or(logs);
+    clean(
+        json!({"engine":"rust","version":env!("CARGO_PKG_VERSION"),"platform":std::env::consts::OS,"arch":std::env::consts::ARCH,"state":status["state"],"error":status["error"],"health":status["health"],"checks":status["checks"],"cores":status["cores"],"recovery":status["recovery"],"transportErrors":status["transportErrors"],"recentLogs":tail,"administrator":is_admin()}),
+    )
 }
 
 #[cfg(test)]

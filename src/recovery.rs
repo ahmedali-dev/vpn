@@ -132,3 +132,75 @@ mod tests {
         ));
     }
 }
+
+/// Structured failure origin, independent of human-readable error messages.
+#[derive(Debug, Clone, Copy, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FailureCategory {
+    Configuration,
+    Dns,
+    Tls,
+    Ssh,
+    Authentication,
+    Identity,
+    Routing,
+    Core,
+    Connectivity,
+    Cleanup,
+}
+impl fmt::Display for FailureCategory {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?} stage failed", self)
+    }
+}
+impl std::error::Error for FailureCategory {}
+pub fn category(error: &anyhow::Error) -> FailureCategory {
+    let stage = error.downcast_ref::<FailureCategory>().copied();
+    if stage == Some(FailureCategory::Cleanup) {
+        return FailureCategory::Cleanup;
+    }
+    if let Some(kind) = error.downcast_ref::<PermanentFailure>() {
+        return match kind {
+            PermanentFailure::Authentication => FailureCategory::Authentication,
+            PermanentFailure::Identity => FailureCategory::Identity,
+            PermanentFailure::Configuration => FailureCategory::Configuration,
+        };
+    }
+    stage.unwrap_or(FailureCategory::Connectivity)
+}
+pub fn stage_category(name: &str) -> FailureCategory {
+    if name.starts_with("DNS") {
+        FailureCategory::Dns
+    } else if name.starts_with("TLS") {
+        FailureCategory::Tls
+    } else if name.starts_with("SSH") {
+        FailureCategory::Ssh
+    } else if name.starts_with("TUN") {
+        FailureCategory::Routing
+    } else if name.starts_with("Core") {
+        FailureCategory::Core
+    } else {
+        FailureCategory::Connectivity
+    }
+}
+
+#[cfg(test)]
+mod category_tests {
+    use super::*;
+    #[test]
+    fn identity_and_cleanup_are_not_lost_behind_stage_context() {
+        let identity = anyhow::anyhow!("bad certificate")
+            .context(PermanentFailure::Identity)
+            .context(FailureCategory::Tls);
+        assert_eq!(category(&identity), FailureCategory::Identity);
+        assert!(permanent(&identity));
+        let cleanup = anyhow::anyhow!("routes remain")
+            .context(PermanentFailure::Configuration)
+            .context(FailureCategory::Cleanup);
+        assert_eq!(category(&cleanup), FailureCategory::Cleanup);
+        assert!(permanent(&cleanup));
+        let dns = anyhow::anyhow!("resolution timed out").context(FailureCategory::Dns);
+        assert_eq!(category(&dns), FailureCategory::Dns);
+        assert!(!permanent(&dns));
+    }
+}

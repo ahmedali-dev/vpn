@@ -20,7 +20,7 @@ class PackagingTests(unittest.TestCase):
     def test_release_build_rejects_unsupported_hosts_before_starting_cargo(self):
         script = pathlib.Path(__file__).with_name('build.py')
         for system, machine in [('Darwin', 'x86_64'), ('Darwin', 'arm64'),
-                                ('Linux', 'aarch64'), ('Linux', 'i686'),
+                                ('Linux', 'i686'),
                                 ('Windows', 'ARM64'), ('Windows', 'x86')]:
             with self.subTest(system=system, machine=machine), \
                     patch('platform.system', return_value=system), \
@@ -30,7 +30,17 @@ class PackagingTests(unittest.TestCase):
                     runpy.run_path(str(script), run_name='__main__')
                 cargo.assert_not_called()
 
-    def test_native_release_packaging_rejects_arm64(self):
+    def test_linux_arm64_native_build_uses_matching_runtime(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=pathlib.Path(folder); (root/'scripts').mkdir(); (root/'target/release').mkdir(parents=True)
+            (root/'target/release/tunnel').write_bytes(b'fake engine')
+            script=root/'scripts/build.py'; shutil.copy2(pathlib.Path(__file__).with_name('build.py'),script)
+            with patch('platform.system',return_value='Linux'), patch('platform.machine',return_value='aarch64'), patch('subprocess.run') as cargo, patch.dict(os.environ,{'TUNNEL_PACKAGE_TARGET':'linux-arm64','CARGO_TARGET_DIR':str(root/'target')},clear=False):
+                runpy.run_path(str(script),run_name='__main__')
+                cargo.assert_called_once()
+                self.assertEqual((root/'dist/runtime/linux-arm64/tunnel').read_bytes(),b'fake engine')
+
+    def test_arm64_native_packaging_rejects_non_ubuntu_distributions(self):
         with self.assertRaisesRegex(ValueError, 'require linux-x64'):
             build_package(self.root, self.root / 'missing-runtime', 'linux-arm64',
                           'arch', '1.2.3', self.root / 'output')

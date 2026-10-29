@@ -71,17 +71,17 @@ def checksum(path):
 
 
 def build_package(root, runtime, target, distro, version, output):
-    if target != 'linux-x64' or distro not in DEPS:
-        raise ValueError('Native packages require linux-x64 and Ubuntu, Fedora, or Arch')
+    if target not in ('linux-x64','linux-arm64') or distro not in DEPS or (target=='linux-arm64' and distro!='ubuntu-24.04'):
+        raise ValueError('Native packages require linux-x64 with Ubuntu/Fedora/Arch, or linux-arm64 with Ubuntu 24.04')
     validate_runtime_arch(runtime, target)
-    arch = 'x86_64'
+    arch = 'aarch64' if target=='linux-arm64' else 'x86_64'
     output = output.resolve()
     with tempfile.TemporaryDirectory(prefix='tunnelnest-package-') as temporary:
         work = pathlib.Path(temporary)
         payload = work / 'payload'
         stage_payload(root, runtime, payload)
         if distro == 'ubuntu-24.04':
-            deb_arch = 'amd64'
+            deb_arch = 'arm64' if target=='linux-arm64' else 'amd64'
             control = payload / 'DEBIAN/control'
             control.parent.mkdir()
             size = sum(p.stat().st_size for p in payload.rglob('*') if p.is_file())

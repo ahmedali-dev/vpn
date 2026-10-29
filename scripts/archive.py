@@ -9,7 +9,7 @@ import tempfile
 from version import VERSION, package_version
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-TARGETS = ('linux-x64', 'win32-x64')
+TARGETS = ('linux-x64', 'linux-arm64', 'win32-x64')
 DISTROS = ('ubuntu-24.04', 'fedora-44', 'arch')
 
 

@@ -35,3 +35,17 @@ test('automatic session trust preserves explicit identities and strict opt-outs'
  const edited=merge([...original,'-ssh-trust-on-first-use'],[...original,'-ssh-trust-on-first-use=false','-p','secret']);
  assert.ok(!edited.includes('-ssh-trust-on-first-use'));assert.equal(edited[edited.indexOf('-p')+1],'secret');
 });
+
+test('explicit false routing flags do not consume the next editor option',()=>{
+ const options=require('./ui/profile-options.js');
+ assert.deepEqual(options.withRouting(['-mode','ssh','-auto-route=false','-health-timeout','35'],true),['-mode','ssh','-health-timeout','35','-tun']);
+ assert.deepEqual(options.withRouting(['-mode','ssh','-tun=false','-health-timeout','35'],false),['-mode','ssh','-health-timeout','35']);
+});
+
+test('ordered routing text roundtrips without exposing arbitrary core JSON',()=>{
+ const options=require('./ui/profile-options.js');const text='direct domain example.com\nblock ip 192.0.2.1/32\nproxy process Firefox Helper';
+ assert.equal(options.routesText(options.routeRules(text)),text);
+ assert.throws(()=>options.routeRules('direct all everything'),/Rule 1/);
+ assert.throws(()=>options.routeRules(Array(65).fill('proxy domain example.com').join('\n')),/64/);
+ const merged=options.merge(['-mode','ssh','-bypass-lan','-routing-rules','[]'],['-mode','ssh']);assert.deepEqual(merged,['-mode','ssh']);
+});

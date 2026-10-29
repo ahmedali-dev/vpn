@@ -242,7 +242,7 @@ async fn core_shutdown_waits_and_removes_only_generated_config() {
     let binary = dir.path().join("fake-core");
     let marker = dir.path().join("marker");
     let stopped = dir.path().join("stopped");
-    std::fs::write(&binary,format!("#!/usr/bin/env python3\nimport sys,signal,time,pathlib\nif '-test' in sys.argv: sys.exit(0)\npathlib.Path({:?}).write_text(sys.argv[-1])\ndef stop(*args):\n pathlib.Path({:?}).write_text('stopped')\n sys.exit(0)\nsignal.signal(signal.SIGTERM,stop)\nwhile True: time.sleep(0.01)\n",marker.to_str().unwrap(),stopped.to_str().unwrap())).unwrap();
+    std::fs::write(&binary,format!("#!/usr/bin/env python3\nimport sys,signal,time,pathlib\nif 'version' in sys.argv: print('Fake core 1.0'); sys.exit(0)\nif '-test' in sys.argv: sys.exit(0)\npathlib.Path({:?}).write_text(sys.argv[-1])\ndef stop(*args):\n pathlib.Path({:?}).write_text('stopped')\n sys.exit(0)\nsignal.signal(signal.SIGTERM,stop)\nwhile True: time.sleep(0.01)\n",marker.to_str().unwrap(),stopped.to_str().unwrap())).unwrap();
     std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
     let mut p = CoreProcess::start(binary.clone(), Some(json!({"test":"secret"})), "", false)
         .await
@@ -253,6 +253,7 @@ async fn core_shutdown_waits_and_removes_only_generated_config() {
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
+    assert_eq!(p.version, "Fake core 1.0");
     let path = std::path::PathBuf::from(std::fs::read_to_string(&marker).unwrap());
     assert!(path.exists());
     assert_eq!(

@@ -7,6 +7,7 @@ TARGETS = {
  'darwin-arm64': ('Xray-macos-arm64-v8a.zip', 'sing-box-1.14.3-darwin-arm64.tar.gz'),
  'darwin-x64': ('Xray-macos-64.zip', 'sing-box-1.14.3-darwin-amd64.tar.gz'),
  'win32-x64': ('Xray-windows-64.zip', 'sing-box-1.14.3-windows-amd64.zip'),
+ 'linux-arm64': ('Xray-linux-arm64-v8a.zip', 'sing-box-1.14.3-linux-arm64.tar.gz'),
  'linux-x64': ('Xray-linux-64.zip', 'sing-box-1.14.3-linux-amd64.tar.gz'),
 }
 def get(url):

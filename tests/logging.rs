@@ -131,3 +131,31 @@ fn file_errors_keep_live_logs_working_and_visible() {
             .contains("still available")
     );
 }
+
+#[test]
+fn diagnostics_include_checks_versions_and_sanitized_recent_failures_only() {
+    let report = Reporter::persistent_in(tempfile::tempdir().unwrap().path(), &config());
+    report.event(
+        "WARN",
+        "TLS",
+        "synthetic-password TN2P.private-share https://localhost:443/#private-fragment",
+    );
+    let mut status = report.snapshot();
+    status["checks"] = serde_json::json!({"systemDns":"passed","ipv6":"not_verified"});
+    status["cores"] = serde_json::json!({"proxy":{"version":"Xray test"}});
+    status["profileArgs"] = serde_json::json!(["-p", "should-not-export"]);
+    let value = tunnelnest::control::diagnostics(&status);
+    assert_eq!(value["checks"]["systemDns"], "passed");
+    assert_eq!(value["cores"]["proxy"]["version"], "Xray test");
+    let encoded = value.to_string();
+    for secret in [
+        "synthetic-password",
+        "private-share",
+        "private-fragment",
+        "should-not-export",
+    ] {
+        assert!(!encoded.contains(secret), "leaked {secret}");
+    }
+    assert!(value.get("profileArgs").is_none());
+    assert!(value.get("recentLogs").is_some());
+}

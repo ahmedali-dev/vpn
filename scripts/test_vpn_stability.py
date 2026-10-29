@@ -30,3 +30,12 @@ class StabilityReportTests(unittest.TestCase):
         self.assertTrue(stability.public_ip('socks5h://127.0.0.1:1080')['ok'])
         args = command.call_args[0][0]
         self.assertEqual(args[args.index('--noproxy') + 1], '')
+
+
+class MacRoutingTests(unittest.TestCase):
+    @mock.patch.object(stability.platform,'system',return_value='Darwin')
+    @mock.patch.object(stability,'command',return_value={'ok':True,'output':'','error':''})
+    def test_macos_snapshot_uses_read_only_native_inspection(self,command,system):
+        self.assertIn('routes',stability.routing())
+        self.assertEqual(command.call_args_list[0].args[0],['/usr/sbin/netstat','-rn'])
+        self.assertEqual(command.call_args_list[1].args[0],['/sbin/ifconfig'])

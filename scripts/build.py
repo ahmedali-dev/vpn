@@ -8,10 +8,11 @@ import subprocess
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 system = {'Linux': 'linux', 'Windows': 'win32'}.get(platform.system())
-if system is None or platform.machine().lower() not in ('x86_64', 'amd64'):
-    raise SystemExit('Release builds require x86_64 Windows or Linux (Ubuntu, Fedora, or Arch). '
-                     'Run this script on the matching native runner; macOS, ARM64, and 32-bit hosts are unsupported.')
-arch = 'x64'
+machine=platform.machine().lower()
+if system is None or machine not in ('x86_64', 'amd64', 'aarch64', 'arm64') or (system == 'win32' and machine not in ('x86_64','amd64')):
+    raise SystemExit('Release builds require x86_64 Windows or x86_64/ARM64 Linux. '
+                     'Run this script on the matching native runner; Use the dedicated script for macOS; Windows ARM64 and 32-bit hosts are unsupported.')
+arch = 'x64' if machine in ('x86_64','amd64') else 'arm64'
 key = f'{system}-{arch}'
 requested = os.environ.get('TUNNEL_PACKAGE_TARGET', key)
 if requested != key:

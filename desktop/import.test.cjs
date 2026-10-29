@@ -18,7 +18,7 @@ test('switching VMess links and profiles clears old SNI overrides', async () => 
       const {link} = JSON.parse(request.body);
       const data = JSON.parse(Buffer.from(link.slice(8),'base64').toString());
       return {ok:true,json:async()=>({Protocol:'vmess',Address:data.add,Port:+data.port,Network:data.net,
-        Host:data.host || '',Path:data.path,SNISource:data.sni?'link':data.host?'host':'server',SNI:data.sni || data.host || data.add})};
+        Host:data.host || '',Path:data.path,SNISource:data.sni?'link':data.host?'host':'server',SNI:data.sni || '',EffectiveSNI:data.sni || data.host || data.add})};
     }});
   const source = fs.readFileSync(__dirname+'/ui/app.js','utf8');
   vm.runInContext(source.slice(0, source.lastIndexOf('setMode();loadProfiles();poll();')),context);
@@ -27,7 +27,7 @@ test('switching VMess links and profiles clears old SNI overrides', async () => 
   element('mode').value='xray';
   element('link').value=link(true);
   await vm.runInContext('readProfile()',context);
-  assert.equal(element('sni').value,'web.whatsapp.com');
+  assert.equal(element('sni').value,'');
   assert.equal(element('wsHost').value,'web.whatsapp.com');
   assert.equal(vm.runInContext('args().includes("-v2ray-sni")',context),false);
   element('sni').value='manual.example.com';
@@ -42,7 +42,7 @@ test('switching VMess links and profiles clears old SNI overrides', async () => 
   context.savedArgs=['-mode','xray','-v2ray-link',link(true)];
   vm.runInContext('applyArgs(savedArgs)',context);
   await new Promise(resolve=>setImmediate(resolve));
-  assert.equal(element('sni').value,'web.whatsapp.com');
+  assert.equal(element('sni').value,'');
   context.savedArgs=['-mode','xray','-v2ray-link',link(false),'-v2ray-sni','explicit.example.com'];
   vm.runInContext('applyArgs(savedArgs)',context);
   await new Promise(resolve=>setImmediate(resolve));

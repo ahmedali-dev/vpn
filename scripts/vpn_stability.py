@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only Windows/Linux VPN routing snapshots and soak tests. Never connects a VPN or changes routes."""
+"""Read-only Windows/Linux/macOS VPN routing snapshots and soak tests. Never connects a VPN or changes routes."""
 import argparse
 import datetime
 import ipaddress
@@ -53,6 +53,9 @@ def routing():
     if os.name == 'nt':
         return {'routes': command(['route.exe', 'print']),
                 'addresses': command(['ipconfig.exe', '/all'])}
+    if platform.system() == 'Darwin':
+        return {'routes': command(['/usr/sbin/netstat', '-rn']),
+                'addresses': command(['/sbin/ifconfig'])}
     return {'routes4': command(['ip', '-4', 'route', 'show', 'table', 'all']),
             'routes6': command(['ip', '-6', 'route', 'show', 'table', 'all']),
             'rules': command(['ip', 'rule', 'show']),
@@ -71,7 +74,8 @@ def sample(args, include_routes=False):
     resolver = dns()
     passed = passed and resolver['ok']
     result = {'at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
-              'mode': args.mode, 'routing': args.routing, 'system': system,
+              'mode': args.mode, 'routing': args.routing, 'scenario': getattr(args,'scenario','normal'),
+              'platform': platform.system(), 'architecture': platform.machine(), 'system': system,
               'socks': socks, 'dns': resolver, 'pass': bool(passed)}
     if include_routes:
         result['network'] = routing()
@@ -116,6 +120,7 @@ def main():
     parser.add_argument('--label', choices=['before', 'connected', 'after'], default='connected')
     parser.add_argument('--mode', choices=['ssh', 'xray', 'v2ray'], required=True)
     parser.add_argument('--routing', choices=['proxy', 'tun'], required=True)
+    parser.add_argument('--scenario', choices=['normal','sleep-wake','network-change','core-crash','disconnect'], default='normal', help='Label the externally performed test; this tool never changes the network')
     parser.add_argument('--socks-port', type=int, default=1080)
     parser.add_argument('--expected-ip', required=True, help='Expected exit IPv4; before/after snapshots use your normal IP')
     parser.add_argument('--expected-ipv6', help='Expected VPN exit IPv6, if available')
@@ -123,8 +128,8 @@ def main():
     parser.add_argument('--interval', type=int, default=30, help='Minimum seconds between samples')
     parser.add_argument('--output', type=Path, required=True, help='Local output directory; may contain public IPs and route details')
     args = parser.parse_args()
-    if platform.system() not in ('Windows', 'Linux'):
-        parser.error('Run routing validation on Windows or Linux')
+    if platform.system() not in ('Windows', 'Linux', 'Darwin'):
+        parser.error('Run routing validation on Windows, Linux, or macOS')
     if not 1 <= args.socks_port <= 65535 or args.duration < 1 or args.interval < 1:
         parser.error('Invalid port, duration or interval')
     try:
@@ -140,6 +145,9 @@ def main():
         if args.label != 'connected':
             # No SOCKS listener is expected when disconnected.
             result['pass'] = result['system']['ok'] and result['system']['ip'] == args.expected_ip and result['dns']['ok']
+        if args.label == 'after':
+            result['tunAddressRemains'] = any(marker in result.get('network',{}).get('addresses',{}).get('output','') for marker in ['172.30.111.1','fdfe:dcba:9876::1'])
+            result['pass'] = result['pass'] and not result['tunAddressRemains']
         path = args.output / (args.label + '.json')
         path.write_text(json.dumps(result, indent=2) + '\n')
         print(str(path) + ': ' + ('PASS' if result['pass'] else 'FAIL'))

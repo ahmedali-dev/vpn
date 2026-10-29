@@ -293,7 +293,7 @@ pub fn interrupt_on_change(
 
 /// Detect the configured TUN address without relying on an arbitrary startup sleep.
 #[cfg(unix)]
-pub async fn tun_present() -> Result<bool> {
+pub async fn tun_interface() -> Result<Option<String>> {
     let mut ptr = std::ptr::null_mut();
     if unsafe { libc::getifaddrs(&mut ptr) } != 0 {
         return Err(std::io::Error::last_os_error().into());
@@ -308,25 +308,84 @@ pub async fn tun_present() -> Result<bool> {
     let mut item = ptr;
     while !item.is_null() {
         let addr = unsafe { &*item };
-        if !addr.ifa_addr.is_null() && unsafe { (*addr.ifa_addr).sa_family } as i32 == libc::AF_INET
-        {
-            let value = unsafe { &*(addr.ifa_addr as *const libc::sockaddr_in) };
-            if value.sin_addr.s_addr.to_ne_bytes() == [172, 30, 111, 1] {
-                return Ok(true);
+        if !addr.ifa_addr.is_null() {
+            let owned = match unsafe { (*addr.ifa_addr).sa_family } as i32 {
+                libc::AF_INET => {
+                    let value = unsafe { &*(addr.ifa_addr as *const libc::sockaddr_in) };
+                    value.sin_addr.s_addr.to_ne_bytes() == [172, 30, 111, 1]
+                }
+                libc::AF_INET6 => {
+                    let value = unsafe { &*(addr.ifa_addr as *const libc::sockaddr_in6) };
+                    value.sin6_addr.s6_addr
+                        == [
+                            0xfd, 0xfe, 0xdc, 0xba, 0x98, 0x76, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+                        ]
+                }
+                _ => false,
+            };
+            if owned && !addr.ifa_name.is_null() {
+                return Ok(Some(
+                    unsafe { std::ffi::CStr::from_ptr(addr.ifa_name) }
+                        .to_string_lossy()
+                        .into_owned(),
+                ));
             }
         }
         item = addr.ifa_next;
     }
-    Ok(false)
+    Ok(None)
 }
 #[cfg(windows)]
-pub async fn tun_present() -> Result<bool> {
-    Ok(output("powershell.exe", &["-NoProfile","-NonInteractive","-Command",
-        "$ErrorActionPreference='Stop'; if (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -eq '172.30.111.1' -and $_.AddressState -eq 'Preferred' }) { 'ready' }"]).await?.trim()=="ready")
+pub async fn tun_interface() -> Result<Option<String>> {
+    let name=output("powershell.exe", &["-NoProfile","-NonInteractive","-Command",
+        "$ErrorActionPreference='Stop'; Get-NetIPAddress | Where-Object { $_.IPAddress -eq '172.30.111.1' -or $_.IPAddress -eq 'fdfe:dcba:9876::1' } | Select-Object -First 1 -ExpandProperty InterfaceAlias"]).await?;
+    Ok((!name.trim().is_empty()).then(|| name.trim().to_owned()))
 }
 #[cfg(not(any(unix, windows)))]
-pub async fn tun_present() -> Result<bool> {
+pub async fn tun_interface() -> Result<Option<String>> {
     anyhow::bail!("TUN inspection unsupported")
+}
+pub async fn tun_present() -> Result<bool> {
+    Ok(tun_interface().await?.is_some())
+}
+
+/// Read-only cleanup check. Never removes routes owned by another VPN.
+pub async fn tun_routes_present(interface: &str) -> Result<bool> {
+    #[cfg(target_os = "linux")]
+    {
+        for family in ["-4", "-6"] {
+            let data = output("ip", &["-j", family, "route", "show", "table", "all"]).await?;
+            let routes: Vec<serde_json::Value> = serde_json::from_str(&data)?;
+            if routes.iter().any(|v| v["dev"].as_str() == Some(interface)) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        Ok(route_table_mentions(
+            &output("/usr/sbin/netstat", &["-rn"]).await?,
+            interface,
+        ))
+    }
+    #[cfg(windows)]
+    {
+        // Read JSON and compare locally; the interface name is never interpolated into PowerShell.
+        let data=output("powershell.exe", &["-NoProfile","-NonInteractive","-Command","$ErrorActionPreference='Stop'; ConvertTo-Json -Compress -InputObject @(Get-NetRoute | Select-Object -ExpandProperty InterfaceAlias)"]).await?;
+        let routes: Vec<String> = serde_json::from_str(&data)?;
+        Ok(routes.iter().any(|v| v == interface))
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+    {
+        anyhow::bail!("route cleanup inspection unsupported")
+    }
+}
+#[cfg(any(target_os = "macos", test))]
+fn route_table_mentions(table: &str, interface: &str) -> bool {
+    table
+        .lines()
+        .any(|line| line.split_whitespace().any(|field| field == interface))
 }
 
 #[cfg(test)]
@@ -385,5 +444,17 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(1), token.cancelled())
             .await
             .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod route_cleanup_tests {
+    use super::*;
+    #[test]
+    fn route_detection_matches_the_owned_interface_exactly() {
+        let routes = "Destination Gateway Flags Netif Expire\ndefault 192.0.2.1 UGSc en0\n0/1 172.30.111.1 UGSc utun9\n::/1 link#20 UGc utun9";
+        assert!(route_table_mentions(routes, "utun9"));
+        assert!(!route_table_mentions(routes, "utun"));
+        assert!(!route_table_mentions("default 192.0.2.1 UGSc en0", "utun9"));
     }
 }

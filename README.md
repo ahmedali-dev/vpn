@@ -41,7 +41,7 @@ python3 scripts/build.py
 ./dist/runtime/linux-x64/tunnel --desktop
 ```
 
-Release scripts support only `linux-x64` (Ubuntu, Fedora, Arch) and `win32-x64` (Windows), on matching x86_64/AMD64 hosts. macOS, ARM64, and 32-bit builds are excluded. Source development on other platforms remains available through Cargo directly. Set `TUNNELNEST_CLI_ONLY=1` to omit the native window. The fetch script retains the original pinned versions and verifies the official release SHA-256 metadata.
+Release builds use matching native hosts: `linux-x64` (Ubuntu/Fedora/Arch), `linux-arm64` (Ubuntu 24.04), `win32-x64`, and `darwin-arm64`/`darwin-x64`. Windows ARM64, other distributions’ native ARM64 packages, and 32-bit builds are not provided. Use the dedicated macOS build script for app bundles. Set `TUNNELNEST_CLI_ONLY=1` to omit the native window. The fetch script retains the original pinned versions and verifies the official release SHA-256 metadata.
 
 ## Behavior
 
@@ -210,7 +210,7 @@ Files live under the normal user's configuration directory at `TunnelNestRust/lo
 Known connection passwords, protocol credentials/share links, proxy credentials, authorization headers, and control tokens are redacted before reaching the activity panel or disk. Logs retain server and forwarding destination addresses for troubleshooting. The authenticated log API only lists/reads bounded log files from this directory; arbitrary paths and symlinks are rejected.
 
 
-Arch release packages use `x86_64`. ARM64 (`aarch64`) machines cannot install these packages; use a compatible ARM64 build from an earlier release/run or build from source with Cargo and matching networking cores.
+Arch release packages use `x86_64`. ARM64 (`aarch64`) machines cannot install these packages; use an Ubuntu ARM64 package on Ubuntu 24.04, or build from source with Cargo and matching networking cores for another ARM64 distribution.
 
 ## Local legacy archives
 
@@ -231,10 +231,37 @@ open dist/macos/TunnelNest.app
 
 The script builds the current Mac architecture, embeds the UI and Cargo version, downloads checksum-verified official Xray and sing-box cores, checks for accidental Homebrew dynamic dependencies, and creates `dist/macos/TunnelNest.app`, a ZIP archive, and its SHA-256 file. The app includes its icon and networking cores in standard bundle resource locations, including for administrator launches. It does not install Rust or Homebrew automatically.
 
-Use `--debug` for faster development builds, `--open` to launch after building, or `--no-cores` only for UI-only work. `CARGO_TARGET_DIR`, `CARGO_HOME`, `RUSTUP_HOME`, and `OPENSSL_DIR` are respected. The all-platform dispatcher also recognizes macOS. Local builds are ad-hoc signed; public distribution still requires a Developer ID identity and notarization. `MAC_SIGN_IDENTITY` selects an existing signing identity; the script does not manage private signing credentials or notarize automatically. macOS is a local build target and is not added to the existing release Actions matrix.
+Use `--debug` for faster development builds, `--open` to launch after building, or `--no-cores` only for UI-only work. `CARGO_TARGET_DIR`, `CARGO_HOME`, `RUSTUP_HOME`, and `OPENSSL_DIR` are respected. The all-platform dispatcher also recognizes macOS. Local builds are ad-hoc signed; public distribution still requires a Developer ID identity and notarization. `MAC_SIGN_IDENTITY` selects an existing signing identity; the script does not manage private signing credentials or notarize automatically. macOS Intel and ARM64 are also included in the release Actions matrix.
 
 ### Interface motion and SSH session trust
 
 The interface uses short entrance, dialog and hover transitions, plus a connection indicator while connecting. Reduced-motion preferences disable these animations. Library controls use standard-sized buttons with the existing line icons.
 
 In the desktop editor, first-use SSH session trust is preselected when a profile has no configured host-key fingerprint or known_hosts path. This trusts the first key without independent identity verification, then rejects a different key during reconnects in that session. A configured fingerprint or known_hosts path keeps its verification policy. Unchecking session trust is remembered as `-ssh-trust-on-first-use=false`, including in saved/shared profiles; CLI defaults remain unchanged. The automatic default is also applied when running older desktop SSH profiles without a configured trust policy, without rewriting their saved records.
+
+### Connection verification and diagnostics
+
+Imported protocol profiles preserve the server address, transport Host, and authored TLS SNI independently. An absent SNI remains blank in the editor and import API (`SNI`); `EffectiveSNI` reports the runtime name separately. VMess TLS WebSocket/HTTPUpgrade retains the compatible Host fallback, then server fallback. Explicit overrides, including a cleared override, are preserved. Imports that finish after another profile is opened cannot overwrite the new editor.
+
+Startup progresses through Connecting, Verifying, and Connected. HTTPS through SOCKS must pass before Connected. Full-device mode additionally checks system DNS and compares the system IPv4 exit with the proxy exit while monitoring the underlying processes. IPv6 routes are captured by the generated configuration, but diagnostics explicitly label IPv6 connectivity as not independently verified. System DNS success is a usability check, not proof against every DNS leak.
+
+On disconnect or startup failure, sing-box receives a graceful shutdown so it can undo its own route/DNS redirection. TunnelNest checks adapter removal and routes referencing the observed TUN interface; it does not delete another VPN's routes or overwrite system DNS settings. Unverified cleanup remains visible as a terminal failure, including during a requested disconnect.
+
+Diagnostics include core version strings, verification results, categorized failures, cleanup status, platform/architecture, and a bounded recent-log excerpt. They omit profile arguments and executable paths and redact connection credentials, profile sharing codes, authorization fields, and local control URL fragments. Temporary network failures retain bounded retries; authentication, identity, configuration, permission, and cleanup failures require attention.
+
+### Full-device routing controls
+
+Open a profile → **Connection routing rules**. Add ordered Domain, IP/CIDR, or Application process rules, choosing **Tunnel**, **Direct**, or **Block**. Domain rules include subdomains. **Bypass local networks** sends private IP traffic directly after explicit rules. Unmatched connections tunnel. These settings are saved and shared with the profile; they apply only when Full-device VPN is enabled. Proxy mode leaves these device-routing settings inactive.
+
+DNS interception stays first and DNS queries continue through the tunnel, including names whose connections go directly. The optional UDP 443 block takes priority over user routes. SSH cannot proxy UDP; explicit direct rules can carry UDP outside SSH. Application rules use actual process names and require the platform's process visibility. Domain matching uses DNS reverse mapping and protocol sniffing; cached DNS, encrypted names, and shared IPs can prevent reliable identification, so domain rules are not a security boundary. For local devices, IP rules are more dependable.
+
+CLI example (the JSON flag is the portable representation; the desktop editor provides controls):
+
+```sh
+# Append to an existing full-device profile's connection arguments:
+-tun -bypass-lan -routing-rules '[{"kind":"domain","value":"example.com","action":"direct"},{"kind":"ip","value":"203.0.113.0/24","action":"proxy"},{"kind":"process","value":"curl","action":"block"}]'
+```
+
+The GitHub workflow now runs on main pushes, pull requests, and manual dispatch, building native candidates for Windows x64, macOS ARM64/Intel, Linux x64, and Ubuntu 24.04 ARM64. Tagged releases include all matching cores and packages. ARM64 Ubuntu builds are native, not x64 binaries under emulation. Other Linux distributions' native ARM64 packaging remains unsupported.
+
+See [native VPN acceptance](docs/PLATFORM-ACCEPTANCE.md) for Proxy/TUN, rules, sleep/wake, network changes, core crashes, and disconnect cleanup. `scripts/vpn_stability.py` can collect read-only reports on all three operating systems. CI builds and local tests are not a substitute for these physical-device checks; Windows 11 authorization and actual live routing must still be verified on Windows 11.

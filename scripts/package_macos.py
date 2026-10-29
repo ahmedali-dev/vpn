@@ -31,6 +31,9 @@ def main():
     arch = {'arm64': 'arm64', 'aarch64': 'arm64', 'x86_64': 'x64'}.get(platform.machine().lower())
     if not arch:
         parser.error('Only macOS ARM64 and Intel x64 are supported.')
+    requested=os.environ.get('TUNNEL_PACKAGE_TARGET','darwin-'+arch)
+    if requested != 'darwin-'+arch:
+        parser.error('Build '+requested+' on its matching native runner.')
     env = os.environ.copy()
     cargo = env.get('CARGO') or shutil.which('cargo')
     missing = []

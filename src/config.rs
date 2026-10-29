@@ -14,8 +14,10 @@ pub const BOOL_FLAGS: &[&str] = &[
     "ssh-trust-on-first-use",
     "ssh-ipv4-only",
     "block-quic",
+    "bypass-lan",
 ];
 pub const VALUE_FLAGS: &[&str] = &[
+    "routing-rules",
     "mode",
     "H",
     "P",
@@ -164,6 +166,7 @@ impl Config {
         if !c.get("proxy", "").is_empty() {
             parse_proxy(c.get("proxy", ""))?;
         }
+        c.routing_rules()?;
         if c.boolean("ui") {
             return Ok(c);
         }
@@ -219,9 +222,11 @@ impl Config {
         let mut args = vec![];
         for key in keys {
             if BOOL_FLAGS.contains(&key.as_str()) {
-                if self.boolean(key) {
-                    args.push(format!("-{key}"));
-                }
+                args.push(if self.boolean(key) {
+                    format!("-{key}")
+                } else {
+                    format!("-{key}=false")
+                });
             } else {
                 args.push(format!("-{key}"));
                 args.push(self.flags[key].clone());
@@ -246,6 +251,9 @@ impl Config {
     }
     pub fn tun(&self) -> bool {
         self.boolean("tun") || self.boolean("auto-route")
+    }
+    pub fn routing_rules(&self) -> Result<Vec<crate::routing::Rule>> {
+        crate::routing::parse(self.get("routing-rules", "[]"))
     }
     pub fn health_timeout(&self) -> std::time::Duration {
         std::time::Duration::from_secs(self.number("health-timeout", 20).unwrap_or(20) as u64)
@@ -320,6 +328,8 @@ pub struct Protocol {
     pub sni: String,
     #[serde(rename = "SNISource")]
     pub sni_source: String,
+    #[serde(rename = "EffectiveSNI")]
+    pub effective_sni: String,
     pub fingerprint: String,
     #[serde(rename = "ALPN")]
     pub alpn: Vec<String>,
@@ -343,6 +353,7 @@ impl Default for Protocol {
             security: "none".into(),
             sni: String::new(),
             sni_source: String::new(),
+            effective_sni: String::new(),
             fingerprint: String::new(),
             alpn: vec![],
             cipher: "auto".into(),
@@ -478,16 +489,18 @@ impl Protocol {
                 && ["ws", "httpupgrade"].contains(&self.network.as_str())
                 && !self.host.is_empty()
             {
-                self.sni = Url::parse(&format!("http://{}", self.host))?
+                self.effective_sni = Url::parse(&format!("http://{}", self.host))?
                     .host_str()
                     .unwrap_or(&self.host)
                     .trim_matches(['[', ']'])
                     .into();
                 self.sni_source = "host".into();
             } else {
-                self.sni = self.address.clone();
+                self.effective_sni = self.address.clone();
                 self.sni_source = "server".into();
             }
+        } else {
+            self.effective_sni = self.sni.clone();
         }
         Ok(())
     }

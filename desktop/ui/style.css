@@ -57,3 +57,19 @@ dialog[open]{animation:enterDialog .18s ease-out}dialog[open]::backdrop{animatio
 .reactor.connecting .orbitTwo{animation:connectOrbit 4s linear infinite}
 .reactor.connecting .orbitDot,.reactor.active .orbitDot{animation:connectionGlow 2s ease-in-out infinite}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*::before,*::after{animation:none!important;transition:none!important}button:hover:not(:disabled){transform:none}}
+
+/* A single connection per row, with compact icon actions. */
+.profileCards{grid-template-columns:minmax(0,1fr);gap:10px}
+.profileCard{display:grid;grid-template-columns:minmax(170px,1.1fr) minmax(190px,1fr) auto;align-items:center;gap:24px;padding:16px 18px}
+.profileCardTitle{min-width:0}
+.cardTop{justify-content:flex-start;gap:14px;margin-bottom:5px}
+.cardMeta{margin:0;padding:0;border:0;min-width:0;gap:20px}
+.cardMeta strong{margin-top:4px;font-size:11px}
+.profileActions{display:flex;flex-wrap:nowrap;gap:7px}
+.profileActions button,.profileActions button:first-child,.profileActions .danger{width:36px;height:36px;min-height:36px;flex:0 0 36px;padding:0;margin:0;display:inline-flex;align-items:center;justify-content:center}
+@media(max-width:850px){.profileCard{grid-template-columns:minmax(0,1fr) auto;gap:14px}.cardMeta{display:none}}
+@media(max-width:450px){.profileCard{gap:8px;padding:13px 10px}.profileActions{gap:4px}.profileActions button,.profileActions button:first-child,.profileActions .danger{width:32px;height:34px;min-height:34px;flex-basis:32px}.profilePick{font-size:13px}.cardTop{gap:6px;font-size:7px}}
+
+.connectionFailure{grid-column:1/-1;padding:10px 12px;border-radius:7px;background:#fff3ec;color:#874526;font-size:11px;overflow-wrap:anywhere;max-height:100px;overflow:auto}
+
+.routingBuilder{display:grid;grid-template-columns:110px minmax(130px,1fr);gap:12px;margin:15px 0}.routingBuilder label:nth-child(3){grid-column:1/-1}.routingBuilder button{justify-self:start}#routingRules{font-family:var(--mono);font-size:11px}#routingDetails>summary{color:var(--accent)}

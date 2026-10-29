@@ -12,7 +12,9 @@ case "${1:-}" in
     exit 0 ;;
 esac
 (($# == 0)) || fail 'Unknown arguments; use --help.'
-[[ "$(uname -s)" == Linux && "$(uname -m)" == x86_64 ]] || fail 'Requires native x86_64 Linux.'
+[[ "$(uname -s)" == Linux ]] || fail 'Requires native Linux.'
+case "$(uname -m)" in x86_64) package_target=linux-x64 ;; aarch64|arm64) package_target=linux-arm64 ;; *) fail 'Requires x86_64 or ARM64 Linux.' ;; esac
+[[ "$package_target" != linux-arm64 || "$expected" == ubuntu ]] || fail 'ARM64 native packages currently support Ubuntu 24.04.'
 [[ -r /etc/os-release ]] || fail 'Cannot detect Linux distribution.'
 . /etc/os-release
 [[ "${ID:-}" == "$expected" ]] || fail "This script requires $expected; detected ${ID:-unknown}."
@@ -85,7 +87,7 @@ if ! rustup run stable cargo --version >/dev/null 2>&1; then
   rustup toolchain install stable --profile minimal
 fi
 # Pin this process to stable even if the user's global default is different.
-export RUSTUP_TOOLCHAIN=stable OPENSSL_STATIC=0 TUNNEL_PACKAGE_TARGET=linux-x64
+export RUSTUP_TOOLCHAIN=stable OPENSSL_STATIC=0 TUNNEL_PACKAGE_TARGET="$package_target"
 export TUNNELNEST_CLI_ONLY=0
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd -- "$root"
@@ -93,5 +95,5 @@ version="$(python3 -c 'from scripts.version import package_version; from pathlib
 python3 scripts/version.py "$version" --check
 python3 scripts/fetch-cores.py
 python3 scripts/build.py
-python3 scripts/archive.py --target linux-x64 --distro "$distro" --version "$version" --native-package
+python3 scripts/archive.py --target "$package_target" --distro "$distro" --version "$version" --native-package
 printf '\nBuild complete. Packages and checksums: %s/dist/release/\n' "$root"

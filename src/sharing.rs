@@ -55,6 +55,12 @@ pub const FLAGS: &[&str] = &[
     "-block-quic",
     "-block-quic=false",
     "-health-timeout",
+    "-tun=false",
+    "-auto-route=false",
+    "-ssh-ipv4-only=false",
+    "-routing-rules",
+    "-bypass-lan",
+    "-bypass-lan=false",
 ];
 const MAX: usize = 65536;
 fn boolean(f: &str) -> bool {

@@ -18,7 +18,7 @@ pub struct Redactor {
 impl Redactor {
     pub fn for_config(c: &Config) -> Self {
         let mut secrets = vec![];
-        for key in ["p", "v2ray-uuid", "v2ray-link"] {
+        for key in ["u", "p", "v2ray-uuid", "v2ray-link"] {
             if let Some(v) = c.flags.get(key) {
                 secrets.push(v.clone());
             }
@@ -56,6 +56,11 @@ impl Redactor {
                     "\"uuid\"",
                     "token=",
                     "token:",
+                    "\"token\"",
+                    "\"secret\"",
+                    "\"private_key\"",
+                    "control_url",
+                    "sharepassword",
                 ]
                 .iter()
                 .any(|key| lower.contains(key))
@@ -102,7 +107,10 @@ impl Redactor {
                     let _ = url.set_username("");
                     let _ = url.set_password(None);
                 }
-                if url.host_str() == Some("127.0.0.1") {
+                if matches!(
+                    url.host_str(),
+                    Some("127.0.0.1" | "localhost" | "[::1]" | "::1")
+                ) {
                     url.set_fragment(None);
                 }
                 url.set_query(None);
