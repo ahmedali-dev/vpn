@@ -4,11 +4,10 @@ set -euo pipefail
 scripts="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 case "${1:-}" in
   -h|--help)
-    printf 'Usage: bash build_for_all.sh [--check]\nBuilds for the current host: macOS ARM64/Intel, or x86_64 Windows/Linux and ARM64 Ubuntu 24.04.\nBuilds and packages with networking cores. Linux/Windows install missing dependencies; macOS reports prerequisites.\n--check reports missing dependencies without installing or building.\n'
+    printf 'Usage: bash build_for_all.sh [--check]\nBuilds for the current host: x86_64 Windows/Linux and ARM64 Ubuntu 24.04.\nBuilds and packages with networking cores. Linux/Windows install missing dependencies.\n--check reports missing dependencies without installing or building.\n'
     exit 0 ;;
 esac
 case "$(uname -s)" in
-  Darwin) exec bash "$scripts/build_for_macos.sh" "$@" ;;
   Linux)
     [[ -r /etc/os-release ]] || { echo 'Cannot detect Linux distribution.' >&2; exit 1; }
     . /etc/os-release
@@ -28,5 +27,5 @@ case "$(uname -s)" in
     script="$scripts/build_for_windows.ps1"
     if command -v cygpath >/dev/null 2>&1; then script="$(cygpath -w "$script")"; fi
     exec "${powershell[@]}" -NoProfile -File "$script" "${arguments[@]}" ;;
-  *) echo 'Builds support macOS ARM64/Intel and x86_64 Windows/Linux or ARM64 Ubuntu. Use matching hosts or GitHub Actions.' >&2; exit 1 ;;
+  *) echo 'Builds support only x86_64 Windows/Linux or ARM64 Ubuntu. Use matching hosts or GitHub Actions.' >&2; exit 1 ;;
 esac

@@ -41,7 +41,7 @@ python3 scripts/build.py
 ./dist/runtime/linux-x64/tunnel --desktop
 ```
 
-Release builds use matching native hosts: `linux-x64` (Ubuntu/Fedora/Arch), `linux-arm64` (Ubuntu 24.04), `win32-x64`, and `darwin-arm64`/`darwin-x64`. Windows ARM64, other distributions’ native ARM64 packages, and 32-bit builds are not provided. Use the dedicated macOS build script for app bundles. Set `TUNNELNEST_CLI_ONLY=1` to omit the native window. The fetch script retains the original pinned versions and verifies the official release SHA-256 metadata.
+Release builds use matching native hosts: `linux-x64` (Ubuntu/Fedora/Arch), `linux-arm64` (Ubuntu 24.04), and `win32-x64`. Windows ARM64, other distributions’ native ARM64 packages, and 32-bit builds are not provided. Set `TUNNELNEST_CLI_ONLY=1` to omit the native window. The fetch script retains the original pinned versions and verifies the official release SHA-256 metadata.
 
 ## Behavior
 
@@ -106,11 +106,11 @@ On Windows, open **64-bit PowerShell**:
 
 Missing Linux dependencies are installed with apt, dnf, or pacman, using sudo only for system package operations. Arch installs missing packages with `pacman -Syu`, which also upgrades the system to avoid partial upgrades. Missing Rust stable is installed through rustup under the invoking user. Windows checks Python, Git, C++ Build Tools/Windows SDK, Rust stable MSVC, WebView2, and vcpkg OpenSSL; missing tools are installed with winget, the signed Microsoft Build Tools installer, and vcpkg. Windows needs Microsoft's App Installer (`winget`) for automatic package installation and may show administrator prompts or request a restart. OpenSSL is built using the same static MSVC triplet as CI. Node/Electron is not needed for these native builds.
 
-These scripts require x86_64/AMD64 hosts. Ubuntu/Fedora versions are checked so package labels match the build distribution. To set the version first, run `python3 scripts/version.py X.Y.Z` (Windows: `py -3 scripts/version.py X.Y.Z`). The local build scripts do not commit, push, or publish releases.
+These scripts require x86_64/AMD64 hosts, with ARM64 additionally supported on Ubuntu 24.04. Ubuntu/Fedora versions are checked so package labels match the build distribution. To set the version first, run `python3 scripts/version.py X.Y.Z` (Windows: `py -3 scripts/version.py X.Y.Z`). The local build scripts do not commit, push, or publish releases.
 
 ### Build Windows, DEB, RPM, and Arch packages without publishing
 
-GitHub Actions builds Windows x64 (`.zip` containing `tunnel.exe`), Ubuntu 24.04 x64 (`.deb`), Fedora 44 x64 (`.rpm`), and Arch Linux x64 (`.pkg.tar.zst`). Portable Linux `.tar.gz` files are retained. The package installs a `tunnelnest` launcher, application-menu entry, icon, and networking cores. macOS is excluded from CI builds.
+GitHub Actions builds Windows x64 (`.zip` containing `tunnel.exe`), Ubuntu 24.04 x64 (`.deb`), Fedora 44 x64 (`.rpm`), and Arch Linux x64 (`.pkg.tar.zst`). Ubuntu 24.04 ARM64 DEB and portable builds are also included. Portable Linux `.tar.gz` files are retained. The package installs a `tunnelnest` launcher, application-menu entry, icon, and networking cores. macOS is excluded from CI builds.
 
 You can trigger all platforms from a Mac. Install GitHub CLI and authenticate, then install the workflow at the actual repository root:
 
@@ -218,20 +218,6 @@ The older main-folder files and SSH/Go application are preserved locally in `arc
 
 The repository root now contains `Cargo.toml`, `Cargo.lock`, `build.rs`, `tauri.conf.json`, `src/`, `desktop/`, `scripts/`, and `tests/`. Generated `target/`, `dist/`, installed dependencies, and caches remain excluded and have been removed.
 
-
-## Native macOS build
-
-Build on Apple Silicon or Intel macOS with Rust stable, Xcode Command Line Tools, Python 3, and static OpenSSL (`brew install openssl@3 pkg-config`). Then run:
-
-```sh
-bash scripts/build_for_macos.sh --check
-bash scripts/build_for_macos.sh
-open dist/macos/TunnelNest.app
-```
-
-The script builds the current Mac architecture, embeds the UI and Cargo version, downloads checksum-verified official Xray and sing-box cores, checks for accidental Homebrew dynamic dependencies, and creates `dist/macos/TunnelNest.app`, a ZIP archive, and its SHA-256 file. The app includes its icon and networking cores in standard bundle resource locations, including for administrator launches. It does not install Rust or Homebrew automatically.
-
-Use `--debug` for faster development builds, `--open` to launch after building, or `--no-cores` only for UI-only work. `CARGO_TARGET_DIR`, `CARGO_HOME`, `RUSTUP_HOME`, and `OPENSSL_DIR` are respected. The all-platform dispatcher also recognizes macOS. Local builds are ad-hoc signed; public distribution still requires a Developer ID identity and notarization. `MAC_SIGN_IDENTITY` selects an existing signing identity; the script does not manage private signing credentials or notarize automatically. macOS Intel and ARM64 are also included in the release Actions matrix.
 
 ### Interface motion and SSH session trust
 
