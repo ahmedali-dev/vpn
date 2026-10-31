@@ -33,9 +33,35 @@ class StabilityReportTests(unittest.TestCase):
 
 
 class MacRoutingTests(unittest.TestCase):
+    @mock.patch.object(stability.os, 'name', 'posix')
     @mock.patch.object(stability.platform,'system',return_value='Darwin')
     @mock.patch.object(stability,'command',return_value={'ok':True,'output':'','error':''})
     def test_macos_snapshot_uses_read_only_native_inspection(self,command,system):
         self.assertIn('routes',stability.routing())
         self.assertEqual(command.call_args_list[0].args[0],['/usr/sbin/netstat','-rn'])
         self.assertEqual(command.call_args_list[1].args[0],['/sbin/ifconfig'])
+
+
+class PlatformRoutingTests(unittest.TestCase):
+    @mock.patch.object(stability.os, 'name', 'nt')
+    @mock.patch.object(stability.platform, 'system', return_value='Windows')
+    @mock.patch.object(stability, 'command', return_value={'ok': True, 'output': '', 'error': ''})
+    def test_windows_snapshot_uses_read_only_native_inspection(self, command, system):
+        self.assertIn('routes', stability.routing())
+        self.assertEqual(command.call_args_list, [
+            mock.call(['route.exe', 'print']),
+            mock.call(['ipconfig.exe', '/all']),
+        ])
+
+    @mock.patch.object(stability.os, 'name', 'posix')
+    @mock.patch.object(stability.platform, 'system', return_value='Linux')
+    @mock.patch.object(stability, 'command', return_value={'ok': True, 'output': '', 'error': ''})
+    def test_linux_snapshot_inspects_both_address_families_and_rules(self, command, system):
+        self.assertIn('routes4', stability.routing())
+        self.assertEqual(command.call_args_list, [
+            mock.call(['ip', '-4', 'route', 'show', 'table', 'all']),
+            mock.call(['ip', '-6', 'route', 'show', 'table', 'all']),
+            mock.call(['ip', 'rule', 'show']),
+            mock.call(['ip', '-6', 'rule', 'show']),
+            mock.call(['ip', '-j', 'address', 'show']),
+        ])
