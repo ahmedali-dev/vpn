@@ -49,3 +49,10 @@ test('ordered routing text roundtrips without exposing arbitrary core JSON',()=>
  assert.throws(()=>options.routeRules(Array(65).fill('proxy domain example.com').join('\n')),/64/);
  const merged=options.merge(['-mode','ssh','-bypass-lan','-routing-rules','[]'],['-mode','ssh']);assert.deepEqual(merged,['-mode','ssh']);
 });
+
+ test('transport edits preserve unrelated link settings and protocol-specific parameters',()=>{
+  const {rewriteLink}=require('./ui/profile-options.js');
+  const link='vless://id@example.com:443?type=grpc&mode=multi&extra=unrelated&spx=%2Fkeep&serviceName=old';
+  const url=new URL(rewriteLink(link,{serviceName:'new',host:'host.example',path:'/path'}));
+  assert.equal(url.searchParams.get('mode'),'multi');assert.equal(url.searchParams.get('extra'),'unrelated');assert.equal(url.searchParams.get('spx'),'/keep');assert.equal(url.searchParams.get('serviceName'),'new');
+ });

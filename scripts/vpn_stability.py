@@ -67,10 +67,10 @@ def sample(args, include_routes=False):
     proxy = 'socks5h://127.0.0.1:' + str(args.socks_port)
     system = public_ip()
     socks = public_ip(proxy)
-    routed = system if args.routing == 'tun' else socks
-    passed = routed['ok'] and routed['ip'] == args.expected_ip
+    passed = socks['ok'] and socks['ip'] == args.expected_ip
     if args.routing == 'tun':
-        passed = passed and socks['ok'] and system['ip'] == socks['ip']
+        expected_system = getattr(args, 'expected_system_ip', None) or args.expected_ip
+        passed = passed and system['ok'] and system['ip'] == expected_system
     resolver = dns()
     passed = passed and resolver['ok']
     result = {'at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -120,9 +120,12 @@ def main():
     parser.add_argument('--label', choices=['before', 'connected', 'after'], default='connected')
     parser.add_argument('--mode', choices=['ssh', 'xray', 'v2ray'], required=True)
     parser.add_argument('--routing', choices=['proxy', 'tun'], required=True)
+    parser.add_argument('--tun-address4', default='172.30.111.1/30', help='Configured virtual IPv4 address/prefix')
+    parser.add_argument('--tun-address6', default='fdfe:dcba:9876::1/126', help='Configured virtual IPv6 address/prefix')
     parser.add_argument('--scenario', choices=['normal','sleep-wake','network-change','core-crash','disconnect'], default='normal', help='Label the externally performed test; this tool never changes the network')
     parser.add_argument('--socks-port', type=int, default=1080)
     parser.add_argument('--expected-ip', required=True, help='Expected exit IPv4; before/after snapshots use your normal IP')
+    parser.add_argument('--expected-system-ip', help='Expected system IPv4 for a deliberate direct rule; expected-ip still checks the proxy exit')
     parser.add_argument('--expected-ipv6', help='Expected VPN exit IPv6, if available')
     parser.add_argument('--duration', type=int, default=28800, help='Soak duration in seconds; default eight hours')
     parser.add_argument('--interval', type=int, default=30, help='Minimum seconds between samples')
@@ -133,6 +136,10 @@ def main():
     if not 1 <= args.socks_port <= 65535 or args.duration < 1 or args.interval < 1:
         parser.error('Invalid port, duration or interval')
     try:
+        if ipaddress.ip_interface(args.tun_address4).version != 4 or ipaddress.ip_interface(args.tun_address6).version != 6:
+            raise ValueError('virtual address families must match their options')
+        if args.expected_system_ip and ipaddress.ip_address(args.expected_system_ip).version != 4:
+            raise ValueError('expected-system-ip must be IPv4')
         if ipaddress.ip_address(args.expected_ip).version != 4:
             raise ValueError('expected-ip must be IPv4')
         if args.expected_ipv6 and ipaddress.ip_address(args.expected_ipv6).version != 6:
@@ -146,8 +153,9 @@ def main():
             # No SOCKS listener is expected when disconnected.
             result['pass'] = result['system']['ok'] and result['system']['ip'] == args.expected_ip and result['dns']['ok']
         if args.label == 'after':
-            result['tunAddressRemains'] = any(marker in result.get('network',{}).get('addresses',{}).get('output','') for marker in ['172.30.111.1','fdfe:dcba:9876::1'])
-            result['pass'] = result['pass'] and not result['tunAddressRemains']
+            result['tunAddressRemains'] = any(marker in result.get('network',{}).get('addresses',{}).get('output','') for marker in [str(ipaddress.ip_interface(args.tun_address4).ip),str(ipaddress.ip_interface(args.tun_address6).ip)])
+            result['cleanupInspectionSucceeded'] = result.get('network', {}).get('addresses', {}).get('ok') is True
+            result['pass'] = result['pass'] and result['cleanupInspectionSucceeded'] and not result['tunAddressRemains']
         path = args.output / (args.label + '.json')
         path.write_text(json.dumps(result, indent=2) + '\n')
         print(str(path) + ': ' + ('PASS' if result['pass'] else 'FAIL'))

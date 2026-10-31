@@ -65,3 +65,13 @@ class PlatformRoutingTests(unittest.TestCase):
             mock.call(['ip', '-6', 'rule', 'show']),
             mock.call(['ip', '-j', 'address', 'show']),
         ])
+
+class SplitPolicyTests(unittest.TestCase):
+    @mock.patch.object(stability, 'dns', return_value={'ok': True})
+    @mock.patch.object(stability, 'public_ip')
+    def test_explicit_system_exit_allows_intentional_direct_probe_but_still_requires_proxy_exit(self, probe, resolver):
+        args=argparse.Namespace(socks_port=1080,routing='tun',mode='ssh',expected_ip='192.0.2.2',expected_system_ip='192.0.2.1')
+        probe.side_effect=[{'ok':True,'ip':'192.0.2.1'},{'ok':True,'ip':'192.0.2.2'}]
+        self.assertTrue(stability.sample(args)['pass'])
+        probe.side_effect=[{'ok':True,'ip':'192.0.2.1'},{'ok':True,'ip':'192.0.2.1'}]
+        self.assertFalse(stability.sample(args)['pass'])

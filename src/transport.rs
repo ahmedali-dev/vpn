@@ -398,6 +398,18 @@ pub struct HostVerifier {
     pub first: Arc<Mutex<Option<String>>>,
     pub report: Option<Reporter>,
 }
+impl HostVerifier {
+    fn record_trust(&self, fingerprint: &str, method: &str) {
+        if let Some(r) = &self.report {
+            let mut status = r.0.lock().unwrap();
+            if !status.connection.is_object() {
+                status.connection = serde_json::json!({});
+            }
+            status.connection["sshFingerprint"] = serde_json::json!(fingerprint);
+            status.connection["sshTrust"] = serde_json::json!(method);
+        }
+    }
+}
 impl client::Handler for HostVerifier {
     type Error = anyhow::Error;
     async fn check_server_key(&mut self, key: &PublicKey) -> Result<bool> {
@@ -430,6 +442,7 @@ impl client::Handler for HostVerifier {
                     anyhow::anyhow!("SSH host key mismatch").context(PermanentFailure::Identity)
                 );
             }
+            self.record_trust(&fingerprint, "verified_fingerprint");
             return Ok(true);
         }
         if self.tofu {
@@ -443,6 +456,7 @@ impl client::Handler for HostVerifier {
                     return Err(anyhow::anyhow!("SSH host key mismatch")
                         .context(PermanentFailure::Identity));
                 }
+                self.record_trust(&fingerprint, "session_only");
                 return Ok(true);
             }
             if let Some(r) = &self.report {
@@ -452,6 +466,7 @@ impl client::Handler for HostVerifier {
                     "Explicit first-use trust: retaining the host key for this connection session",
                 );
             }
+            self.record_trust(&fingerprint, "session_only");
             *first = Some(fingerprint);
             return Ok(true);
         }
@@ -467,6 +482,7 @@ impl client::Handler for HostVerifier {
                 anyhow::anyhow!("SSH host key is not trusted").context(PermanentFailure::Identity)
             );
         }
+        self.record_trust(&fingerprint, "verified_known_hosts");
         Ok(true)
     }
 }
@@ -559,6 +575,7 @@ pub async fn connect_ssh_logged(
         return Err(anyhow::anyhow!("SSH password authentication failed")
             .context(PermanentFailure::Authentication));
     }
+    r.0.lock().unwrap().connection["sshAuthenticated"] = serde_json::json!(true);
     r.event(
         "INFO",
         "SSH",

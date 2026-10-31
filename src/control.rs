@@ -48,6 +48,7 @@ pub struct Control {
     session: AsyncMutex<Option<Session>>,
     store: Mutex<Option<Store>>,
     helper: AsyncMutex<Option<Helper>>,
+    helper_failure: Mutex<Option<Value>>,
     last_lease: AtomicU64,
     epoch: Instant,
     log_dir: Mutex<Option<PathBuf>>,
@@ -68,6 +69,7 @@ impl Control {
             session: AsyncMutex::new(None),
             store: Mutex::new(store),
             helper: AsyncMutex::new(None),
+            helper_failure: Mutex::new(None),
             last_lease: AtomicU64::new(0),
             epoch: Instant::now(),
             log_dir: Mutex::new(logging::default_dir().ok()),
@@ -88,8 +90,11 @@ impl Control {
     }
     async fn stop(&self) -> Result<()> {
         if let Some(url) = self.helper_url().await {
-            helper_request(&url, "stop", Some(json!({}))).await?;
-            let _ = self.status().await;
+            if helper_request(&url, "stop", Some(json!({}))).await.is_err() {
+                self.detach_failed_helper(&url).await;
+            } else {
+                let _ = self.status().await;
+            }
         }
         let mut session = self.session.lock().await;
         if let Some(s) = session.as_mut() {
@@ -98,18 +103,40 @@ impl Control {
         Ok(())
     }
     async fn status(&self) -> Result<Value> {
-        if let Some(url) = self.helper_url().await {
-            let mut v = helper_request(&url, "status", None).await?;
-            if let Some(h) = self.helper.lock().await.as_ref() {
-                mirror_logs(&h.mirror, &h.last, &v);
-                let local = h.mirror.snapshot();
-                v["logFile"] = local["logFile"].clone();
-                v["logError"] = local["logError"].clone();
+        // A replaced helper must never inherit an old helper's status or logs.
+        for _ in 0..2 {
+            let Some(url) = self.helper_url().await else {
+                break;
+            };
+            let response = helper_request(&url, "status", None).await;
+            if self.helper_url().await.as_ref() != Some(&url) {
+                continue;
             }
+            let mut v = match response {
+                Ok(v) => v,
+                Err(_) => {
+                    self.detach_failed_helper(&url).await;
+                    continue;
+                }
+            };
+            let attached = self.helper.lock().await;
+            let Some(h) = attached.as_ref().filter(|h| h.url == url) else {
+                continue;
+            };
+            mirror_logs(&h.mirror, &h.last, &v);
+            let local = h.mirror.snapshot();
+            v["logFile"] = local["logFile"].clone();
+            v["logError"] = local["logError"].clone();
             v["administrator"] = json!(is_admin());
             v["helperAvailable"] = json!(true);
             v["version"] = json!(env!("CARGO_PKG_VERSION"));
             return Ok(v);
+        }
+        Ok(self.local_status().await)
+    }
+    async fn local_status(&self) -> Value {
+        if let Some(value) = self.helper_failure.lock().unwrap().clone() {
+            return value;
         }
         let session = self.session.lock().await;
         let mut status = session
@@ -117,7 +144,27 @@ impl Control {
             .map(|s| s.report.snapshot())
             .unwrap_or_else(|| Reporter::default().snapshot());
         status["version"] = json!(env!("CARGO_PKG_VERSION"));
-        Ok(status)
+        status["helperAvailable"] = json!(false);
+        status
+    }
+    async fn detach_failed_helper(&self, url: &url::Url) {
+        let mut attached = self.helper.lock().await;
+        if attached.as_ref().is_none_or(|h| h.url != *url) {
+            return;
+        }
+        let helper = attached.take().unwrap();
+        let reason = "Administrator helper disconnected. Previous VPN cleanup is unverified; reconnect to authorize a fresh helper.";
+        helper.mirror.event("ERROR", "HELPER", reason);
+        let mut snapshot = helper.mirror.snapshot();
+        snapshot["state"] = json!("error");
+        snapshot["error"] = json!(reason);
+        snapshot["health"] = json!({"state":"failed","error":reason});
+        snapshot["recovery"] = json!({"tunCleanupVerified":false,"lastFailure":{"category":"helper","reason":reason,"terminal":true}});
+        snapshot["helperAvailable"] = json!(false);
+        snapshot["version"] = json!(env!("CARGO_PKG_VERSION"));
+        *self.helper_failure.lock().unwrap() = Some(snapshot);
+        // Revoke renewal. The helper's bounded lease remains the cleanup backstop.
+        helper.cancel.cancel();
     }
     async fn start(&self, args: Vec<String>) -> Result<()> {
         let c = Config::parse(&args)?;
@@ -143,6 +190,7 @@ impl Control {
             close_helper(helper).await;
         }
         let report = Reporter::persistent_in(&self.log_dir()?, &c);
+        *self.helper_failure.lock().unwrap() = None;
         *session = Some(Session::start_with_report(c, report));
         Ok(())
     }
@@ -176,6 +224,7 @@ impl Control {
                 }}
             }
         });
+        *self.helper_failure.lock().unwrap() = None;
         let previous = self.helper.lock().await.replace(Helper {
             url,
             cancel,
@@ -865,5 +914,60 @@ mod log_mirror_tests {
             saved.contains("[ERROR] [HELPER]"),
             "mirroring must preserve source severity"
         );
+    }
+}
+
+#[cfg(test)]
+mod helper_recovery_tests {
+    use super::*;
+    #[tokio::test]
+    async fn unreachable_helper_detaches_without_breaking_local_status_or_losing_logs() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let app=Router::new().fallback(||async{Json(json!({"administrator":true,"state":"connected","logs":"previous helper message\n","logSession":"fixture","logStart":0,"logEnd":24}))});
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let c = Control::new(
+            "127.0.0.1:12345".into(),
+            "a".repeat(64),
+            false,
+            None,
+            CancellationToken::new(),
+        );
+        c.set_log_dir(dir.path().into());
+        let url = format!("http://{address}/#{}", "b".repeat(64));
+        c.attach(&url).await.unwrap();
+        assert_eq!(c.status().await.unwrap()["helperAvailable"], true);
+        c.detach_failed_helper(
+            &format!("http://127.0.0.1:1/#{}", "c".repeat(64))
+                .parse()
+                .unwrap(),
+        )
+        .await;
+        assert!(
+            c.helper_url().await.is_some(),
+            "a stale poll must not detach a replacement helper"
+        );
+        server.abort();
+        let _ = server.await;
+        let status = tokio::time::timeout(Duration::from_secs(3), c.status())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(status["state"], "error");
+        assert_eq!(status["helperAvailable"], false);
+        assert_eq!(status["recovery"]["tunCleanupVerified"], false);
+        assert!(
+            status["logs"]
+                .as_str()
+                .unwrap()
+                .contains("previous helper message")
+        );
+        assert!(c.helper_url().await.is_none());
+        assert!(!status.to_string().contains(&"b".repeat(64)));
+        c.stop().await.unwrap();
+        assert_eq!(c.status().await.unwrap()["state"], "error");
     }
 }

@@ -51,7 +51,7 @@ pub fn xray_config(c: &Config, p: &Protocol, pin: Option<&str>) -> Value {
         }
         "trojan" => json!({"servers":[{"address":addr,"port":p.port,"password":p.uuid}]}),
         _ => {
-            json!({"servers":[{"address":addr,"port":p.port,"password":p.uuid,"method":"aes-256-gcm"}]})
+            json!({"servers":[{"address":addr,"port":p.port,"password":p.uuid,"method":p.cipher}]})
         }
     };
     let mut stream = json!({"network":p.network,"security":p.security});
@@ -70,7 +70,12 @@ pub fn xray_config(c: &Config, p: &Protocol, pin: Option<&str>) -> Value {
             }
         }
         "httpupgrade" => stream["httpupgradeSettings"] = json!({"host":p.host,"path":p.path}),
-        "xhttp" => stream["xhttpSettings"] = json!({"host":p.host,"path":p.path}),
+        "xhttp" => {
+            stream["xhttpSettings"] = json!({"host":p.host,"path":p.path,"mode":p.xhttp_mode});
+            if !p.xhttp_extra.is_null() {
+                stream["xhttpSettings"]["extra"] = p.xhttp_extra.clone();
+            }
+        }
         _ => stream["tcpSettings"] = json!({"header":{"type":"none"}}),
     }
     if p.security == "tls" {
@@ -94,7 +99,7 @@ pub fn xray_config(c: &Config, p: &Protocol, pin: Option<&str>) -> Value {
         }
         stream["tlsSettings"] = tls;
     } else if p.security == "reality" {
-        stream["realitySettings"] = json!({"serverName":p.effective_sni,"fingerprint":if p.fingerprint.is_empty(){"chrome"}else{&p.fingerprint},"password":p.reality_public_key,"shortId":p.reality_short_id,"show":false});
+        stream["realitySettings"] = json!({"serverName":p.effective_sni,"fingerprint":if p.fingerprint.is_empty(){"chrome"}else{&p.fingerprint},"password":p.reality_public_key,"shortId":p.reality_short_id,"spiderX":p.reality_spider_x,"show":false});
     }
     let mut config = json!({"log":{"loglevel":"info"},"inbounds":[{"listen":"127.0.0.1","port":c.socks_port(),"protocol":"socks","settings":{"auth":"noauth","udp":true}}],"outbounds":[{"protocol":p.protocol,"settings":settings,"streamSettings":stream},{"protocol":"freedom","tag":"direct"}],"routing":{"domainStrategy":"IPIfNonMatch","rules":[{"type":"field","outboundTag":"direct","domain":["geosite:private"]}]}});
     if c.boolean("block-quic") {
@@ -113,6 +118,20 @@ pub fn tun_config(c: &Config, excluded: &[String], platform: &str) -> Value {
     let ssh = c.mode() == "ssh";
     let ipv4 = ssh && c.boolean("ssh-ipv4-only");
     let mut inbound = json!({"type":"tun","tag":"device","address":["172.30.111.1/30","fdfe:dcba:9876::1/126"],"mtu":c.number("tun-mtu",1500).unwrap_or(1500),"auto_route":true,"strict_route":true,"route_exclude_address":excluded});
+    let settings = crate::tun::Settings::from_config(c).expect("validated TUN settings");
+    inbound["address"] = json!(
+        settings
+            .addresses
+            .iter()
+            .map(|a| a.cidr())
+            .collect::<Vec<_>>()
+    );
+    if settings.stack != "auto" {
+        inbound["stack"] = json!(settings.stack);
+    }
+    if platform != "macos" {
+        inbound["interface_name"] = json!("TunnelNest");
+    }
     if platform == "linux" {
         inbound["auto_redirect"] = json!(true);
     }

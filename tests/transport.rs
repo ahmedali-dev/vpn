@@ -72,6 +72,12 @@ async fn tls_and_ssh_verify_identity_and_forward_bytes() {
         .await
         .unwrap();
     let saved = reporter.snapshot();
+    assert_eq!(saved["connection"]["sshAuthenticated"], true);
+    assert_eq!(saved["connection"]["sshTrust"], "verified_fingerprint");
+    assert_eq!(
+        saved["connection"]["sshFingerprint"],
+        server.ssh_fingerprint
+    );
     let text = saved["logs"].as_str().unwrap();
     for event in [
         "[TCP]",

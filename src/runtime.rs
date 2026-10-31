@@ -460,6 +460,24 @@ async fn run(mut c: Config, cancel: CancellationToken, r: Reporter) -> Result<()
             }
         ),
     );
+    {
+        let mut status = r.0.lock().unwrap();
+        status.connection["sshHost"] = json!(if c.mode() == "ssh" { host.as_str() } else { "" });
+        status.connection["sshPort"] = json!(port);
+        status.connection["tlsTrust"] = json!(if !c.get("v2ray-config", "").is_empty() {
+            "custom_config"
+        } else if c.mode() != "ssh" && c.protocol().is_ok_and(|p| p.security == "none") {
+            "not_enabled"
+        } else if c.mode() != "ssh" && c.protocol().is_ok_and(|p| p.security == "reality") {
+            "reality_key"
+        } else if setting == "insecure" {
+            "session_unverified"
+        } else if setting == "auto" || setting == "none" {
+            "certificate_verified"
+        } else {
+            "configured_pin"
+        });
+    }
     // Explicit compatibility pins survive restarts for this connection session only.
     let mut compatibility_pin = None;
     let tofu_key = Arc::new(Mutex::new(None));
@@ -490,6 +508,11 @@ async fn run(mut c: Config, cancel: CancellationToken, r: Reporter) -> Result<()
             "reconnecting"
         });
         r.health("connecting", "");
+        if c.mode() == "ssh" {
+            let mut status = r.0.lock().unwrap();
+            status.connection["sshAuthenticated"] = json!(false);
+            status.connection["sshTrust"] = json!("pending");
+        }
         r.0.lock().unwrap().checks = json!({"proxyHttps":"pending","systemDns":if c.tun(){"pending"}else{"not_applicable"},"systemIpv4":if c.tun(){"pending"}else{"not_applicable"},"ipv6":"not_verified"});
         {
             let mut status = r.0.lock().unwrap();
@@ -725,6 +748,9 @@ async fn run_once(
     connected_for: &mut Duration,
 ) -> Result<()> {
     let health_timeout = c.health_timeout();
+    let device_settings = crate::tun::Settings::from_config(c)?;
+    let device_ips = device_settings.ips();
+    let split_policy = has_split_policy(c)?;
     let listener = TcpListener::bind(("127.0.0.1", c.socks_port()))
         .await
         .context("SOCKS port is already occupied")?;
@@ -755,7 +781,7 @@ async fn run_once(
     let mut ssh = None;
     let mut tun = None;
     let mut tun_started = false;
-    let observed_interface = Arc::new(Mutex::new(None));
+    let observed_interface: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     let mut connected_at = None;
     let outcome=async {
     if c.mode()=="ssh" {
@@ -782,7 +808,7 @@ async fn run_once(
     if verified.is_none(){return Ok(());}
     r.0.lock().unwrap().checks["proxyHttps"]=json!("passed");
     r.log("[+] HTTPS traffic verified through SOCKS");
-    let expected_exit=if c.tun(){
+    let expected_exit=if c.tun()&&!split_policy{
         let value=startup_work(cancel.clone(),||{
             if let Some(p)=core.as_mut(){p.check_running("core during exit verification")?;}
             if let Some(s)=&ssh{ensure!(!s.is_closed(),"SSH session closed during exit verification");}
@@ -791,7 +817,16 @@ async fn run_once(
         if value.is_none(){return Ok(());}value
     }else{None};
     if c.tun(){
-        if crate::network::tun_present().await? {return Err(anyhow::anyhow!("TUN address 172.30.111.1 is already in use; disconnect the other tunnel first").context(crate::recovery::PermanentFailure::Configuration));}
+        if let Some(name)=crate::network::tun_conflict(&device_settings,&crate::network::interface_addresses().await?) {
+            return Err(anyhow::anyhow!("Configured TUN subnet overlaps interface {name}; choose unused private TUN addresses").context(crate::recovery::PermanentFailure::Configuration));
+        }
+        for route in excluded {
+            if let Some(ip)=route.split('/').next().and_then(|v|v.parse::<IpAddr>().ok())
+                && device_settings.addresses.iter().any(|a|a.overlaps(ip,if ip.is_ipv4(){32}else{128})) {
+                return Err(anyhow::anyhow!("Configured TUN subnet overlaps an upstream server; choose unused private TUN addresses").context(crate::recovery::PermanentFailure::Configuration));
+            }
+        }
+        r.event("INFO","TUN",format!("Virtual addresses: {}; stack={}",device_settings.addresses.iter().map(|a|a.cidr()).collect::<Vec<_>>().join(", "),device_settings.stack));
         if c.mode()=="ssh" && c.boolean("ssh-ipv4-only") {
             r.event("INFO","TUN","IPv4 compatibility: filtering AAAA/HTTPS/SVCB DNS responses; cached IPv6 TLS/HTTP destinations use hostname recovery; other IPv6 traffic stays blocked. SSH carries TCP; UDP applications are unsupported.");
         }
@@ -806,13 +841,19 @@ async fn run_once(
                 Ok(())
             },
             ||async {
-                match crate::network::tun_interface().await? {Some(name)=>*observed_interface.lock().unwrap()=Some(name),None=>return Ok(false)}
+                match crate::network::tun_interface_for(&device_ips).await? {Some(name)=>*observed_interface.lock().unwrap()=Some(name),None=>return Ok(false)}
                 verify_system_dns(health_timeout).await?;
                 r.0.lock().unwrap().checks["systemDns"]=json!("passed");
-                let actual=exit_ip(None,health_timeout).await?;
-                matching_exit(expected_exit.unwrap(),actual)?;
-                r.0.lock().unwrap().checks["systemIpv4"]=json!("passed");
-                r.event("INFO","TUN",format!("System DNS works and IPv4 exit {actual} matches verified proxy exit; IPv6 is captured but not independently verified"));
+                if split_policy {
+                    verify_policy_routes(&device_ips, excluded).await?;
+                    r.0.lock().unwrap().checks["systemIpv4"]=json!("policy_not_compared");
+                    r.event("INFO","TUN","Split routing policy verified: proxy HTTPS, system DNS and owned TUN routes checked; system exit may intentionally differ");
+                } else {
+                    let actual=exit_ip(None,health_timeout).await?;
+                    matching_exit(expected_exit.unwrap(),actual)?;
+                    r.0.lock().unwrap().checks["systemIpv4"]=json!("passed");
+                    r.event("INFO","TUN",format!("System DNS works and IPv4 exit {actual} matches verified proxy exit; IPv6 is not independently verified"));
+                }
                 Ok(true)
             })).await?;
         if !ready {return Ok(());}
@@ -830,13 +871,21 @@ async fn run_once(
                 },
                 || {
                     let report=r.clone();
+                    let probe_ips=device_ips.clone();
+                    let probe_excluded=excluded.to_vec();
                     async move {
                         if full_device {
                             verify_system_dns(health_timeout).await?;
-                            let proxy=exit_ip(Some(port),health_timeout).await.context("proxy exit check failed")?;
-                            let system=exit_ip(None,health_timeout).await.context("system exit check failed")?;
-                            matching_exit(proxy,system)?;
-                            report.event("INFO","HEALTH",format!("Proxy and system IPv4 exits match: {system}"));
+                            if split_policy {
+                                verify_with_timeout(Some(port),Some(&report),health_timeout).await?;
+                                verify_policy_routes(&probe_ips, &probe_excluded).await?;
+                                report.event("INFO","HEALTH","Split-policy health passed: profile HTTPS, DNS and owned TUN routes");
+                            } else {
+                                let proxy=exit_ip(Some(port),health_timeout).await.context("proxy exit check failed")?;
+                                let system=exit_ip(None,health_timeout).await.context("system exit check failed")?;
+                                matching_exit(proxy,system)?;
+                                report.event("INFO","HEALTH",format!("Proxy and system IPv4 exits match: {system}"));
+                            }
                             Ok(())
                         }else{verify_with_timeout(Some(port),Some(&report),health_timeout).await.context("proxy health check failed")}
                     }
@@ -846,7 +895,7 @@ async fn run_once(
         .map(|at: std::time::Instant| at.elapsed())
         .unwrap_or_default();
     let owned_interface = if tun_started {
-        match crate::network::tun_interface().await {
+        match crate::network::tun_interface_for(&device_ips).await {
             Ok(None) => Ok(observed_interface.lock().unwrap().clone()),
             other => other,
         }
@@ -872,7 +921,10 @@ async fn run_once(
         // Allow asynchronous adapter removal, but never delete another app's routes.
         let check = async {
             for _ in 0..10 {
-                if !crate::network::tun_present().await? {
+                if crate::network::tun_interface_for(&device_ips)
+                    .await?
+                    .is_none()
+                {
                     if let Ok(Some(interface)) = &owned_interface {
                         if crate::network::tun_routes_present(interface).await? {
                             tokio::time::sleep(Duration::from_millis(100)).await;
@@ -1066,6 +1118,19 @@ where
     result
 }
 
+pub fn has_split_policy(c: &Config) -> Result<bool> {
+    Ok(c.boolean("bypass-lan") || !c.routing_rules()?.is_empty())
+}
+async fn verify_policy_routes(ips: &[IpAddr], excluded: &[String]) -> Result<()> {
+    let interface = crate::network::tun_interface_for(ips)
+        .await?
+        .context("Configured TUN interface is missing")?;
+    ensure!(
+        crate::network::tun_capture_routes_present(&interface, excluded).await?,
+        "IPv4/IPv6 capture routes are missing from the owned TUN interface"
+    );
+    Ok(())
+}
 fn matching_exit(proxy: IpAddr, system: IpAddr) -> Result<()> {
     ensure!(
         proxy == system,

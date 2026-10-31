@@ -11,6 +11,7 @@ pub mod sharing;
 pub mod store;
 pub mod traffic;
 pub mod transport;
+pub mod tun;
 
 #[cfg(feature = "desktop")]
 pub mod desktop;

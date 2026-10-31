@@ -61,6 +61,9 @@ pub const FLAGS: &[&str] = &[
     "-routing-rules",
     "-bypass-lan",
     "-bypass-lan=false",
+    "-tun-address4",
+    "-tun-address6",
+    "-tun-stack",
 ];
 const MAX: usize = 65536;
 fn boolean(f: &str) -> bool {

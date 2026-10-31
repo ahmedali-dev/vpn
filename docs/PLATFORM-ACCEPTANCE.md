@@ -24,3 +24,17 @@ python3 scripts/vpn_stability.py snapshot --label after --mode ssh --routing tun
 ```
 
 Keep reports local: they contain public IPs, process/platform details, and route information. Record OS version, architecture, package checksum, mode, scenario, result, and any untested cases in the release QA notes. CI artifacts are candidate builds, not a completed physical-device test report.
+
+## Record evidence without claiming unrun tests
+
+Use one evidence directory per device, account, and mode (SSH/Xray, Proxy/TUN). Keep normal snapshots in `normal/`, and soak reports under `sleep-wake/`, `network-change/`, and `core-crash/`. The observer labels tests but never performs sleep, switches a network, or kills a core. If interruptions produce failed samples, the soak remains failed even if it recovers; investigate the failures and retain the recovery measurements.
+
+After physically checking the window, OS elevation prompt, route rules, and cleanup, write an `operator.json` with `osVersion`, `architecture`, `appVersion`, `mode`, `routing`, and the Boolean fields `windowOpened`, `elevationPrompt`, `routingRulesChecked`, and `cleanupInspected`. Mark a field true only after checking it on that device. Then run:
+
+```sh
+python3 scripts/acceptance_status.py vpn-test-results/windows11-ssh-tun
+```
+
+Missing reports and unchecked items fail this check. Operator observations are labelled **reported**, not independently verified. This checker never connects a VPN or sends reports anywhere. Mac CI validates native Intel/ARM builds and local fixtures; it does not certify physical-device routing. Use the new `--tun-address4` and `--tun-address6` observer options when testing non-default virtual addresses.
+
+For deliberate split routing, `--expected-ip` must remain the verified proxy exit. If the system IP probe is intentionally direct, also set `--expected-system-ip` to that expected direct exit. This checks both paths against explicit expectations; it does not independently validate every routing rule. An unsuccessful address inspection now fails the after-disconnect snapshot rather than assuming cleanup succeeded.

@@ -46,7 +46,7 @@ Release builds use matching native hosts: `linux-x64` (Ubuntu/Fedora/Arch), `lin
 ## Behavior
 
 - SSH over TLS with password authentication, known_hosts or SHA-256 SSH fingerprints, explicit session first-use trust, HTTP/HTTPS CONNECT proxies, and bounded custom payload templates.
-- VMess, VLESS, Trojan, manual Shadowsocks, TLS/REALITY, WebSocket, gRPC, HTTP, HTTPUpgrade, and XHTTP configurations through Xray/V2Ray.
+- VMess, VLESS, Trojan, plain SIP002/legacy Shadowsocks links and manual Shadowsocks, TLS/REALITY, WebSocket, gRPC, HTTP, HTTPUpgrade, and XHTTP configurations through Xray/V2Ray.
 - Certificate validation by default. Alternate SNI can use an automatically discovered certificate pin only after verification against the real hostname. Explicit `insecure` compatibility pins are kept only for the current connection session. SSH key trust remains independent.
 - Loopback SOCKS5 and PAC, capped SSH connections, HTTPS startup checks, health monitoring, bounded reconnect backoff, child-process cleanup, and private temporary configs.
 - Full-device sing-box routing with upstream exclusions, tunneled DNS, Linux auto_redirect, and a second check through system routing. SSH carries TCP; general UDP is rejected. IPv4 compatibility filters AAAA and HTTPS/SVCB DNS hints. For cached IPv6 TLS/HTTP destinations it recovers the visible server hostname and forwards the original request unchanged through SSH with remote DNS. Other literal IPv6 destinations remain blocked. If an application retains encrypted or non-HTTP IPv6 requests from before VPN activation, restart that application to clear its cache; disable IPv4 compatibility only when the SSH server supports IPv6.
@@ -251,3 +251,28 @@ CLI example (the JSON flag is the portable representation; the desktop editor pr
 The GitHub workflow now runs on main pushes, pull requests, and manual dispatch, building native candidates for Windows x64, macOS ARM64/Intel, Linux x64, and Ubuntu 24.04 ARM64. Tagged releases include all matching cores and packages. ARM64 Ubuntu builds are native, not x64 binaries under emulation. Other Linux distributions' native ARM64 packaging remains unsupported.
 
 See [native VPN acceptance](docs/PLATFORM-ACCEPTANCE.md) for Proxy/TUN, rules, sleep/wake, network changes, core crashes, and disconnect cleanup. `scripts/vpn_stability.py` can collect read-only reports on all three operating systems. CI builds and local tests are not a substitute for these physical-device checks; Windows 11 authorization and actual live routing must still be verified on Windows 11.
+
+### Profile and routing reliability
+
+The editor saves transport Host/Path changes for VMess, VLESS and Trojan. Imports retain gRPC service names, XHTTP mode/extra JSON and REALITY spider paths. Unknown VMess TLS values are rejected rather than silently disabling TLS. Plain Shadowsocks links are supported; plugins remain unsupported.
+
+Full-device profiles can set `-tun-address4`, `-tun-address6`, `-tun-stack` (`auto`, `system`, `gvisor`, `mixed`) and `-tun-mtu`. The editor exposes these under advanced settings. Subnets must stay inside private IPv4/ULA space and must not overlap existing interfaces or the upstream server. Interface readiness and disconnect cleanup use these configured addresses.
+
+With split rules or LAN bypass, health checks verify proxy HTTPS, system DNS and owned IPv4/IPv6 capture routes. They allow the system public IP to differ from the proxy exit because direct rules can cause that deliberately. This check does not prove every application rule or IPv6 end-to-end connectivity. Profiles without split rules retain the system/proxy IPv4 comparison.
+
+The app displays the configured TLS verification policy and SSH trust method. A session-observed SSH key can be filled into the profile only after you explicitly confirm independent verification; saving then persists the fingerprint. Session-only first-key trust does not verify the initial server identity. Losing an elevated helper retains the activity log and restores local controls, reports cleanup as unverified, and requires fresh authorization on reconnect.
+
+The macOS validation workflow checks native Intel/ARM builds and bundled-core schemas. Physical Windows/Linux/macOS elevation, routing, sleep/wake and network-switch checks remain required. Follow `docs/PLATFORM-ACCEPTANCE.md`; `scripts/acceptance_status.py` rejects missing evidence rather than treating untested devices as passed.
+
+### Interactive Python push and build
+
+Run `python3 scripts/push_and_build.py` from any directory. It asks for a branch (empty means `main`) and an `X.Y.Z` version. It checks out an existing local/remote branch or creates a new branch from your current commit, updates Cargo and desktop version metadata, commits **all** staged/unstaged/untracked files that Git does not ignore, pushes normally, then dispatches `rust-release.yml` on that branch. Requires Git, a configured Git author, and an existing `gh auth login` with repository/workflow access. No local Rust build is needed. A main push may also trigger the workflow's existing automatic build.
+
+```sh
+python3 scripts/push_and_build.py
+python3 scripts/push_and_build.py --branch main --version 1.3.6 --dry-run
+python3 scripts/push_and_build.py --branch main --version 1.3.6
+python3 scripts/push_and_build.py --branch main --version 1.3.6 --release
+```
+
+Normal mode builds downloadable Actions artifacts. `--release` creates and atomically pushes the branch and a new `rust-vX.Y.Z` tag; the existing tag-triggered workflow builds and publishes the GitHub release. Existing tags are rejected, and pushes never force or reset your work. Manual dispatch requires the workflow to exist on the repository's default branch. If dispatch fails after a successful push, the script prints a retry command. `--dry-run` only validates local inputs and prints the intended operation; it does not change version files, branches or remote state.

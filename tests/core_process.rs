@@ -185,6 +185,11 @@ async fn generated_configs_pass_bundled_core_validation_when_available() {
                 .join("cores")
         });
     if !cores.exists() {
+        assert_ne!(
+            std::env::var("TUNNELNEST_REQUIRE_CORES").as_deref(),
+            Ok("1"),
+            "bundled cores are required for this validation job"
+        );
         eprintln!(
             "core schema check skipped: no networking cores in {}",
             cores.display()
@@ -193,7 +198,11 @@ async fn generated_configs_pass_bundled_core_validation_when_available() {
     }
     let mut c=Config::parse(&["-mode","xray","-v2ray-link","vless://00000000-0000-0000-0000-000000000001@example.com:443?security=tls&type=ws&sni=example.com"].map(str::to_owned)).unwrap();
     c.flags.insert("block-quic".into(), "true".into());
-    {
+    for stack in ["auto", "system", "gvisor", "mixed"] {
+        c.flags.insert("tun-stack".into(), stack.into());
+        c.flags.insert("tun-address4".into(), "10.83.0.1/30".into());
+        c.flags
+            .insert("tun-address6".into(), "fd23:4567::1/126".into());
         let platform = std::env::consts::OS;
         let mut file = tempfile::NamedTempFile::new().unwrap();
         file.write_all(
@@ -215,24 +224,37 @@ async fn generated_configs_pass_bundled_core_validation_when_available() {
             String::from_utf8_lossy(&output.stderr)
         );
     }
-    let mut file = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
-    file.write_all(&serde_json::to_vec(&xray_config(&c, &c.protocol().unwrap(), None)).unwrap())
-        .unwrap();
-    file.flush().unwrap();
-    let output =
-        tokio::process::Command::new(cores.join(format!("xray{}", std::env::consts::EXE_SUFFIX)))
-            .args(["run", "-test", "-config"])
-            .arg(file.path())
-            .current_dir(&cores)
-            .output()
-            .await
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    let links = [
+        c.get("v2ray-link", "").to_owned(),
+        format!("vmess://{}", STANDARD.encode(json!({"add":"example.com","port":443,"id":"00000000-0000-0000-0000-000000000001","net":"grpc","path":"/service","tls":true}).to_string())),
+        "vless://00000000-0000-0000-0000-000000000001@example.com:443?type=xhttp&security=tls&mode=packet-up&extra=%7B%22scMaxEachPostBytes%22%3A12345%7D".into(),
+        "vless://00000000-0000-0000-0000-000000000001@example.com:443?type=tcp&security=reality&sni=example.com&pbk=qR9bb5s1e4p7Afvz30C_BM1Ww6qg1EWhC2xLr6vj4Gs&spx=%2Fspider".into(),
+        format!("ss://{}@example.com:443", STANDARD.encode("aes-256-gcm:password")),
+    ];
+    for link in links {
+        let p = tunnelnest::config::Protocol::parse(&link).unwrap();
+        let mut file = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+        file.write_all(&serde_json::to_vec(&xray_config(&c, &p, None)).unwrap())
             .unwrap();
-    assert!(
-        output.status.success(),
-        "{} {}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
+        file.flush().unwrap();
+        let output = tokio::process::Command::new(
+            cores.join(format!("xray{}", std::env::consts::EXE_SUFFIX)),
+        )
+        .args(["run", "-test", "-config"])
+        .arg(file.path())
+        .current_dir(&cores)
+        .output()
+        .await
+        .unwrap();
+        assert!(
+            output.status.success(),
+            "{}: {} {}",
+            p.protocol,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }
 #[cfg(unix)]
 #[tokio::test]

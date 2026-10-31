@@ -1,0 +1,64 @@
+name: macOS native validation
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    name: Native ${{ matrix.target }} checks
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            target: darwin-arm64
+          - runner: macos-15-intel
+            target: darwin-x64
+    env:
+      TUNNEL_PACKAGE_TARGET: ${{ matrix.target }}
+      TUNNELNEST_REQUIRE_CORES: '1'
+      GH_TOKEN: ${{ github.token }}
+      OPENSSL_STATIC: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Native dependencies
+        run: |
+          brew install openssl@3 pkg-config
+          echo "OPENSSL_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+          rustup default stable
+      - name: Verified matching cores
+        run: python3 scripts/fetch-cores.py
+      - name: Rust checks and local transport tests
+        run: |
+          cargo fmt --all --check
+          cargo clippy --locked --all-targets --features desktop -- -D warnings
+          cargo test --locked --features desktop
+      - name: Interface and acceptance-tool tests
+        run: |
+          npm ci --prefix desktop --ignore-scripts --no-audit --no-fund
+          node --test desktop/*.test.cjs
+          python3 -m unittest discover -s scripts -p 'test_*.py' -v
+      - name: Build local candidate and smoke-test CLI
+        run: |
+          bash scripts/build_for_macos.sh --debug
+          dist/macos/TunnelNest.app/Contents/MacOS/tunnel --help
+      - uses: actions/upload-artifact@v4
+        with:
+          name: validation-${{ matrix.target }}
+          path: |
+            dist/macos/*.zip
+            dist/macos/*.sha256
+          if-no-files-found: error
+          retention-days: 14
