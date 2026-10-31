@@ -24,6 +24,8 @@ jobs:
       TUNNELNEST_REQUIRE_CORES: '1'
       GH_TOKEN: ${{ github.token }}
       OPENSSL_STATIC: '1'
+      MACOSX_DEPLOYMENT_TARGET: '11.0'
+      TUNNEL_CORE_CACHE_DIR: ${{ github.workspace }}/dist/core-downloads
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -32,12 +34,29 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
       - name: Native dependencies
         run: |
           brew install openssl@3 pkg-config
           echo "OPENSSL_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
           rustup toolchain install stable --profile minimal --component rustfmt --component clippy
           rustup default stable
+      - name: Fingerprint native OpenSSL
+        run: echo "NATIVE_DEPS_KEY=$(shasum -a 256 "$(brew --prefix openssl@3)/lib/libssl.a" | cut -d ' ' -f 1)" >> "$GITHUB_ENV"
+      - name: Cache native Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+          env-vars: NATIVE_DEPS_KEY MACOSX_DEPLOYMENT_TARGET
+          cache-bin: false
+          cache-on-failure: true
+      - name: Cache verified core download archives
+        uses: actions/cache@v4
+        with:
+          path: dist/core-downloads
+          key: cores-${{ runner.os }}-${{ env.TUNNEL_PACKAGE_TARGET }}-${{ hashFiles('scripts/fetch-cores.py') }}
+          restore-keys: cores-${{ runner.os }}-${{ env.TUNNEL_PACKAGE_TARGET }}-
       - name: Verified matching cores
         run: python3 scripts/fetch-cores.py
       - name: Rust checks and local transport tests

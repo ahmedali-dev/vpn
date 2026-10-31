@@ -19,7 +19,8 @@ def fetch(task):
  target, repo, filename, asset = task
  expected = asset.get('digest', '')
  if not expected.startswith('sha256:'): raise RuntimeError('No trusted SHA256 metadata: '+filename)
- cache = pathlib.Path('/private/tmp/tunnel-core-downloads') if os.name != 'nt' and pathlib.Path('/private/tmp').exists() else ROOT/'dist/core-downloads'
+ default_cache = pathlib.Path('/private/tmp/tunnel-core-downloads') if os.name != 'nt' and pathlib.Path('/private/tmp').exists() else ROOT/'dist/core-downloads'
+ cache = pathlib.Path(os.environ.get('TUNNEL_CORE_CACHE_DIR', default_cache))
  cache.mkdir(parents=True, exist_ok=True)
  download = cache/filename
  data = download.read_bytes() if download.exists() else get(asset['browser_download_url'])

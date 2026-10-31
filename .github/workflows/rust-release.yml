@@ -11,6 +11,11 @@ on:
 permissions:
   contents: read
 
+env:
+  TUNNEL_CORE_CACHE_DIR: ${{ github.workspace }}/dist/core-downloads
+  # Fast candidates; published release tags retain the existing ThinLTO settings.
+  CARGO_PROFILE_RELEASE_LTO: ${{ startsWith(github.ref, 'refs/tags/rust-v') && 'thin' || 'off' }}
+
 concurrency:
   group: rust-release-${{ github.ref }}
   cancel-in-progress: false
@@ -80,6 +85,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
       - name: Validate release version before building
         run: |
           if [[ "$GITHUB_REF" == refs/tags/rust-v* ]]; then
@@ -94,6 +101,24 @@ jobs:
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o "$RUNNER_TEMP/tunnelnest-rustup.sh"
           sh "$RUNNER_TEMP/tunnelnest-rustup.sh" -y --profile minimal --default-toolchain stable --component rustfmt --component clippy --no-modify-path
           printf '%s/bin\n' "$CARGO_HOME" >> "$GITHUB_PATH"
+      - name: Fingerprint native dependencies
+        run: |
+          native_key="$( { pkg-config --modversion openssl gtk+-3.0 webkit2gtk-4.1 dbus-1; gcc --version; } | sha256sum | cut -d ' ' -f 1)"
+          echo "NATIVE_DEPS_KEY=$native_key" >> "$GITHUB_ENV"
+      - name: Cache Rust dependencies by distribution and architecture
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+          key: ${{ matrix.distro }}-${{ matrix.target }}
+          env-vars: NATIVE_DEPS_KEY CARGO_PROFILE_RELEASE_LTO
+          cache-bin: false
+          cache-on-failure: true
+      - name: Cache verified core download archives
+        uses: actions/cache@v4
+        with:
+          path: dist/core-downloads
+          key: cores-${{ runner.os }}-${{ env.TUNNEL_PACKAGE_TARGET }}-${{ hashFiles('scripts/fetch-cores.py') }}
+          restore-keys: cores-${{ runner.os }}-${{ env.TUNNEL_PACKAGE_TARGET }}-
       - name: Fetch checksum-verified networking cores
         run: python3 scripts/fetch-cores.py
       - name: Test packaging and native package metadata
@@ -160,6 +185,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
       - name: Validate release version before building
         run: |
           if [[ "$GITHUB_REF" == refs/tags/rust-v* ]]; then
@@ -169,7 +196,24 @@ jobs:
           fi
           python3 scripts/version.py "$version" --check
           printf 'RELEASE_VERSION=%s\n' "$version" >> "$GITHUB_ENV"
+      - name: Prepare Windows dependency cache
+        id: vcpkg-cache-key
+        shell: pwsh
+        run: |
+          $revision = git -C "$env:VCPKG_INSTALLATION_ROOT" rev-parse HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot identify the runner vcpkg revision' }
+          "revision=$revision-$env:ImageVersion" >> "$env:GITHUB_OUTPUT"
+          "NATIVE_DEPS_KEY=windows-2022-x64-windows-static-md-$revision" >> "$env:GITHUB_ENV"
+          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP/vcpkg-binary-cache" | Out-Null
+      - name: Cache Windows OpenSSL binary packages
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/vcpkg-binary-cache
+          key: vcpkg-windows-2022-x64-windows-static-md-${{ steps.vcpkg-cache-key.outputs.revision }}
+          restore-keys: vcpkg-windows-2022-x64-windows-static-md-
       - name: Install Windows OpenSSL
+        env:
+          VCPKG_BINARY_SOURCES: clear;files,${{ runner.temp }}/vcpkg-binary-cache,readwrite
         shell: pwsh
         run: |
           & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" install openssl:x64-windows-static-md
@@ -179,10 +223,27 @@ jobs:
           "OPENSSL_LIB_DIR=$openssl/lib" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "OPENSSL_INCLUDE_DIR=$openssl/include" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "OPENSSL_LIBS=libssl:libcrypto" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $sslHash = (Get-FileHash "$openssl/lib/libssl.lib" -Algorithm SHA256).Hash
+          $cryptoHash = (Get-FileHash "$openssl/lib/libcrypto.lib" -Algorithm SHA256).Hash
+          "NATIVE_DEPS_KEY=${env:NATIVE_DEPS_KEY}-$sslHash-$cryptoHash" >> "$env:GITHUB_ENV"
       - name: Install stable Rust
         run: |
           rustup toolchain install stable --profile minimal --component rustfmt --component clippy
           rustup default stable
+      - name: Cache Windows Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+          key: windows-2022-win32-x64
+          env-vars: NATIVE_DEPS_KEY CARGO_PROFILE_RELEASE_LTO
+          cache-bin: false
+          cache-on-failure: true
+      - name: Cache verified core download archives
+        uses: actions/cache@v4
+        with:
+          path: dist/core-downloads
+          key: cores-${{ runner.os }}-${{ env.TUNNEL_PACKAGE_TARGET }}-${{ hashFiles('scripts/fetch-cores.py') }}
+          restore-keys: cores-${{ runner.os }}-${{ env.TUNNEL_PACKAGE_TARGET }}-
       - name: Fetch checksum-verified networking cores
         run: python3 scripts/fetch-cores.py
       - name: Test portable Windows packaging

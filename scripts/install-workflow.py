@@ -14,6 +14,11 @@ def render(source, prefix):
                                 'working-directory: ' + json.dumps(prefix))
         source = source.replace('path: dist/release/*',
                                 'path: ' + json.dumps(prefix + '/dist/release/*'))
+        source = source.replace('cache-dependency-path: desktop/package-lock.json', 'cache-dependency-path: ' + json.dumps(prefix + '/desktop/package-lock.json'))
+        source = source.replace('path: dist/core-downloads', 'path: ' + json.dumps(prefix + '/dist/core-downloads'))
+        source = source.replace('${{ github.workspace }}/dist/core-downloads', '${{ github.workspace }}/' + prefix + '/dist/core-downloads')
+        source = source.replace("hashFiles('scripts/fetch-cores.py')", "hashFiles('" + prefix + "/scripts/fetch-cores.py')")
+        source = source.replace('workspaces: . -> target', 'workspaces: ' + json.dumps(prefix + ' -> target'))
         source = source.replace('notes="release-notes/', 'notes="' + prefix + '/release-notes/')
     return source
 

@@ -266,7 +266,7 @@ The macOS validation workflow checks native Intel/ARM builds and bundled-core sc
 
 ### Interactive Python push and build
 
-Run `python3 scripts/push_and_build.py` from any directory. It asks for a branch (empty means `main`) and an `X.Y.Z` version. It checks out an existing local/remote branch or creates a new branch from your current commit, updates Cargo and desktop version metadata, commits **all** staged/unstaged/untracked files that Git does not ignore, pushes normally, then dispatches `rust-release.yml` on that branch. Requires Git, a configured Git author, and an existing `gh auth login` with repository/workflow access. No local Rust build is needed. A main push may also trigger the workflow's existing automatic build.
+Run `python3 scripts/push_and_build.py` from any directory. It asks for a branch (empty means `main`) and an `X.Y.Z` version. It checks out an existing local/remote branch or creates a new branch from your current commit, updates Cargo and desktop version metadata, commits **all** staged/unstaged/untracked files that Git does not ignore, pushes normally, then starts `rust-release.yml`. A changed `main` push uses the automatic trigger; custom branches and an unchanged `main` use manual dispatch. Requires Git, a configured Git author, and an existing `gh auth login` with repository/workflow access. No local Rust build is needed.
 
 ```sh
 python3 scripts/push_and_build.py
@@ -276,3 +276,9 @@ python3 scripts/push_and_build.py --branch main --version 1.3.6 --release
 ```
 
 Normal mode builds downloadable Actions artifacts. `--release` creates and atomically pushes the branch and a new `rust-vX.Y.Z` tag; the existing tag-triggered workflow builds and publishes the GitHub release. Existing tags are rejected, and pushes never force or reset your work. Manual dispatch requires the workflow to exist on the repository's default branch. If dispatch fails after a successful push, the script prints a retry command. `--dry-run` only validates local inputs and prints the intended operation; it does not change version files, branches or remote state.
+
+### Faster GitHub builds
+
+Rust dependency caches are separated by distribution/architecture, compiler and native dependency fingerprints. Core archive downloads use an explicit workspace cache on every OS and still undergo release-metadata SHA-256 verification on every restore. Windows additionally caches vcpkg binary packages for OpenSSL; vcpkg checks package ABI compatibility before reuse.
+
+Ordinary Linux/Windows candidates disable release LTO to shorten linking. `rust-v*` release tags retain ThinLTO. The first run (or a compiler/native-dependency change) may still build from scratch. Main pushes no longer cause an extra manual build from the Python helper. Existing tests and per-distribution native package checks remain enabled; native dependency installation is retained rather than relying on an externally published container image.

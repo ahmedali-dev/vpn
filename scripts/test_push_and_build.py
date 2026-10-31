@@ -122,8 +122,8 @@ class PublishTests(unittest.TestCase):
             return base_run(*args,**kwargs)
         with mock.patch.object(publish,'run',side_effect=fail_dispatch):
             with self.assertRaisesRegex(publish.CommandError,'The push succeeded.*'):
-                publish.execute('main','1.2.3')
-        self.assertEqual(self.git('rev-parse','main',root=self.remote),self.git('rev-parse','HEAD'))
+                publish.execute('feature/dispatch','1.2.3')
+        self.assertEqual(self.git('rev-parse','feature/dispatch',root=self.remote),self.git('rev-parse','HEAD'))
 
     def test_remote_changes_are_not_overwritten_and_dispatch_is_not_started_after_rejection(self):
         other=self.root.parent/'other'
@@ -148,3 +148,7 @@ class PublishTests(unittest.TestCase):
         self.assertEqual(self.git('rev-parse','HEAD'),head)
         self.assertFalse(any('commit' in c for c in self.commands))
         self.assertTrue(any(c[:3]==('gh','workflow','run') for c in self.commands))
+
+    def test_changed_main_push_does_not_dispatch_a_second_build(self):
+        publish.execute('main','1.2.3')
+        self.assertFalse(any(c[:3]==('gh','workflow','run') for c in self.commands))

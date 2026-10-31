@@ -119,14 +119,17 @@ def execute(branch, version, release=False, dry_run=False):
         print('Pushed ' + tag + '; its push triggers the build and release workflow.', flush=True)
     else:
         git('push', '--set-upstream', 'origin', 'HEAD:' + branch_ref)
-        try:
-            run('gh', 'workflow', 'run', WORKFLOW, '--repo', repo_url, '--ref', branch)
-        except CommandError as error:
-            raise CommandError(str(error) + '\nThe push succeeded. Retry the workflow without another commit:\n'
-                               + f'gh workflow run {WORKFLOW} --repo {repo_url} --ref {json.dumps(branch)}') from error
+        head = git('rev-parse', 'HEAD', capture=True).stdout.strip()
+        if branch == 'main' and remote_sha != head:
+            print('The main push starts the Actions build; skipping duplicate manual dispatch.', flush=True)
+        else:
+            # Custom branches and an unchanged main need an explicit dispatch.
+            try:
+                run('gh', 'workflow', 'run', WORKFLOW, '--repo', repo_url, '--ref', branch)
+            except CommandError as error:
+                raise CommandError(str(error) + '\nThe push succeeded. Retry the workflow without another commit:\n'
+                                   + f'gh workflow run {WORKFLOW} --repo {repo_url} --ref {json.dumps(branch)}') from error
     print('Actions: ' + repo_url.rstrip('/') + '/actions', flush=True)
-    if not release and branch == 'main':
-        print('The existing main push trigger may also queue its automatic validation build.')
 
 
 def main():

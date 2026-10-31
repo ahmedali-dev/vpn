@@ -1,4 +1,3 @@
-#[cfg(unix)]
 use serde_json::json;
 use std::{io::Write, time::Duration};
 #[cfg(unix)]

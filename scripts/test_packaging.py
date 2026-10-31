@@ -132,6 +132,10 @@ class PackagingTests(unittest.TestCase):
         self.assertNotIn('working-directory: .', nested)
         self.assertNotIn('path: dist/release/*', nested)
         self.assertIn('working-directory: "apps/Tunnel Nest"', nested)
+        self.assertIn('path: "apps/Tunnel Nest/dist/core-downloads"', nested)
+        self.assertIn('workspaces: "apps/Tunnel Nest -> target"', nested)
+        self.assertIn("hashFiles('apps/Tunnel Nest/scripts/fetch-cores.py')", nested)
+        self.assertIn('cache-dependency-path: "apps/Tunnel Nest/desktop/package-lock.json"', nested)
         self.assertEqual(installer.render(source, ''), source)
 
     @unittest.skipUnless(sys.platform == 'linux' and os.environ.get('TUNNELNEST_TEST_DISTRO'),
