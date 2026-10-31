@@ -35,10 +35,6 @@ jobs:
             target: linux-x64
             runner: ubuntu-24.04
             image: ubuntu:24.04
-          - distro: ubuntu-24.04
-            target: linux-arm64
-            runner: ubuntu-24.04-arm
-            image: ubuntu:24.04
           - distro: fedora-44
             target: linux-x64
             runner: ubuntu-24.04
@@ -297,7 +293,7 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
           checksums=(*.sha256)
-          test "${#checksums[@]}" -eq 9
+          test "${#checksums[@]}" -eq 7
           for checksum in "${checksums[@]}"; do sha256sum --check "$checksum"; done
           cat "${checksums[@]}" > SHA256SUMS.txt
           rm -- "${checksums[@]}"
@@ -312,7 +308,7 @@ jobs:
             cat > "$notes" <<NOTES
           TunnelNest Rust $version
 
-          Native Rust desktop and CLI builds: Windows x64 ZIP, Ubuntu 24.04 x64 DEB, Fedora 44 x64 RPM, and Arch Linux x64 pkg.tar.zst. Portable Linux tarballs are also included. Every package includes Xray and sing-box plus their licenses. Verify downloads against SHA256SUMS.txt. Ubuntu 24.04 ARM64 DEB/portable builds are also included. Windows, Fedora, and Arch packages target x86_64; 32-bit builds are excluded.
+          Native Rust desktop and CLI builds: Windows x64 ZIP, Ubuntu 24.04 x64 DEB, Fedora 44 x64 RPM, and Arch Linux x64 pkg.tar.zst. Portable Linux tarballs are also included. Every package includes Xray and sing-box plus their licenses. Verify downloads against SHA256SUMS.txt. All release packages target x86_64; ARM and 32-bit builds are excluded.
 
           Builds are unsigned. Windows requires WebView2. Each Linux archive is built inside its named distribution and needs that distribution's GTK 3, WebKitGTK 4.1, OpenSSL, and D-Bus runtime libraries. Arch builds target the rolling release at build time. Live VPN connections, native authorization, and actual TUN routing require platform testing. Existing Go profiles can be transferred using shared profile codes/files.
           NOTES

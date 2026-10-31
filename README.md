@@ -41,7 +41,7 @@ python3 scripts/build.py
 ./dist/runtime/linux-x64/tunnel --desktop
 ```
 
-Release builds use matching native hosts: `linux-x64` (Ubuntu/Fedora/Arch), `linux-arm64` (Ubuntu 24.04), and `win32-x64`. Windows ARM64, other distributions’ native ARM64 packages, and 32-bit builds are not provided. Set `TUNNELNEST_CLI_ONLY=1` to omit the native window. The fetch script retains the original pinned versions and verifies the official release SHA-256 metadata.
+Local release builders support matching native hosts: `linux-x64` (Ubuntu/Fedora/Arch), `linux-arm64` (Ubuntu 24.04), and `win32-x64`. Windows ARM64, other distributions’ native ARM64 packages, and 32-bit builds are not provided. Set `TUNNELNEST_CLI_ONLY=1` to omit the native window. The fetch script retains the original pinned versions and verifies the official release SHA-256 metadata.
 
 ## Behavior
 
@@ -110,7 +110,7 @@ These scripts require x86_64/AMD64 hosts, with ARM64 additionally supported on U
 
 ### Build Windows, DEB, RPM, and Arch packages without publishing
 
-GitHub Actions builds Windows x64 (`.zip` containing `tunnel.exe`), Ubuntu 24.04 x64 (`.deb`), Fedora 44 x64 (`.rpm`), and Arch Linux x64 (`.pkg.tar.zst`). Ubuntu 24.04 ARM64 DEB and portable builds are also included. Portable Linux `.tar.gz` files are retained. The package installs a `tunnelnest` launcher, application-menu entry, icon, and networking cores. macOS is excluded from CI builds.
+GitHub Actions builds Windows x64 (`.zip` containing `tunnel.exe`), Ubuntu 24.04 x64 (`.deb`), Fedora 44 x64 (`.rpm`), and Arch Linux x64 (`.pkg.tar.zst`). Portable Linux `.tar.gz` files are retained. The package installs a `tunnelnest` launcher, application-menu entry, icon, and networking cores. A separate workflow validates macOS Intel builds; macOS is excluded from published release assets.
 
 You can trigger all platforms from a Mac. Install GitHub CLI and authenticate, then install the workflow at the actual repository root:
 
@@ -210,7 +210,7 @@ Files live under the normal user's configuration directory at `TunnelNestRust/lo
 Known connection passwords, protocol credentials/share links, proxy credentials, authorization headers, and control tokens are redacted before reaching the activity panel or disk. Logs retain server and forwarding destination addresses for troubleshooting. The authenticated log API only lists/reads bounded log files from this directory; arbitrary paths and symlinks are rejected.
 
 
-Arch release packages use `x86_64`. ARM64 (`aarch64`) machines cannot install these packages; use an Ubuntu ARM64 package on Ubuntu 24.04, or build from source with Cargo and matching networking cores for another ARM64 distribution.
+Arch release packages use `x86_64`. ARM64 (`aarch64`) machines cannot install these packages; build from source with Cargo and matching networking cores. Ubuntu 24.04 supports local ARM64 packaging; GitHub Actions skips all ARM builds.
 
 ## Local legacy archives
 
@@ -248,7 +248,7 @@ CLI example (the JSON flag is the portable representation; the desktop editor pr
 -tun -bypass-lan -routing-rules '[{"kind":"domain","value":"example.com","action":"direct"},{"kind":"ip","value":"203.0.113.0/24","action":"proxy"},{"kind":"process","value":"curl","action":"block"}]'
 ```
 
-The GitHub workflow now runs on main pushes, pull requests, and manual dispatch, building native candidates for Windows x64, macOS ARM64/Intel, Linux x64, and Ubuntu 24.04 ARM64. Tagged releases include all matching cores and packages. ARM64 Ubuntu builds are native, not x64 binaries under emulation. Other Linux distributions' native ARM64 packaging remains unsupported.
+The GitHub workflows run on main pushes, pull requests and manual dispatch. They build x64 candidates for Windows and Linux (Ubuntu/Fedora/Arch), plus macOS Intel validation. All ARM/ARM64 CI build jobs are skipped. Tagged releases contain the Windows x64 ZIP plus three Linux x64 portable archives and their native packages (seven archive checksums). Local ARM64 build support remains available.
 
 See [native VPN acceptance](docs/PLATFORM-ACCEPTANCE.md) for Proxy/TUN, rules, sleep/wake, network changes, core crashes, and disconnect cleanup. `scripts/vpn_stability.py` can collect read-only reports on all three operating systems. CI builds and local tests are not a substitute for these physical-device checks; Windows 11 authorization and actual live routing must still be verified on Windows 11.
 
@@ -262,7 +262,7 @@ With split rules or LAN bypass, health checks verify proxy HTTPS, system DNS and
 
 The app displays the configured TLS verification policy and SSH trust method. A session-observed SSH key can be filled into the profile only after you explicitly confirm independent verification; saving then persists the fingerprint. Session-only first-key trust does not verify the initial server identity. Losing an elevated helper retains the activity log and restores local controls, reports cleanup as unverified, and requires fresh authorization on reconnect.
 
-The macOS validation workflow checks native Intel/ARM builds and bundled-core schemas. Physical Windows/Linux/macOS elevation, routing, sleep/wake and network-switch checks remain required. Follow `docs/PLATFORM-ACCEPTANCE.md`; `scripts/acceptance_status.py` rejects missing evidence rather than treating untested devices as passed.
+The macOS validation workflow checks native Intel builds and bundled-core schemas. Physical Windows/Linux/macOS elevation, routing, sleep/wake and network-switch checks remain required. Follow `docs/PLATFORM-ACCEPTANCE.md`; `scripts/acceptance_status.py` rejects missing evidence rather than treating untested devices as passed.
 
 ### Interactive Python push and build
 

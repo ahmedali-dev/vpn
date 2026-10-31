@@ -1,6 +1,6 @@
 # Native VPN acceptance
 
-The GitHub workflow tests and builds Windows x64, macOS ARM64/Intel, Linux x64, and Ubuntu 24.04 ARM64 on matching runners. It validates the bundled cores and exercises local routing without changing the runner's system routes. A successful workflow does **not** certify desktop authorization prompts or live full-device VPN behavior.
+The GitHub workflow tests and builds Windows x64, macOS Intel and Linux x64 on matching runners. It validates the bundled cores and exercises local routing without changing the runner's system routes. A successful workflow does **not** certify desktop authorization prompts or live full-device VPN behavior.
 
 Before a release, test Windows 11, both supported Mac architectures when available, and Linux x64/ARM64 with a working test account. Never upload real credentials to CI. The commands below inspect connectivity and write local reports; they do not start/stop a VPN, change network settings, kill a process, or put the device to sleep.
 
@@ -35,6 +35,6 @@ After physically checking the window, OS elevation prompt, route rules, and clea
 python3 scripts/acceptance_status.py vpn-test-results/windows11-ssh-tun
 ```
 
-Missing reports and unchecked items fail this check. Operator observations are labelled **reported**, not independently verified. This checker never connects a VPN or sends reports anywhere. Mac CI validates native Intel/ARM builds and local fixtures; it does not certify physical-device routing. Use the new `--tun-address4` and `--tun-address6` observer options when testing non-default virtual addresses.
+Missing reports and unchecked items fail this check. Operator observations are labelled **reported**, not independently verified. This checker never connects a VPN or sends reports anywhere. Mac CI validates native Intel builds and local fixtures; it does not certify physical-device routing. Use the new `--tun-address4` and `--tun-address6` observer options when testing non-default virtual addresses.
 
 For deliberate split routing, `--expected-ip` must remain the verified proxy exit. If the system IP probe is intentionally direct, also set `--expected-system-ip` to that expected direct exit. This checks both paths against explicit expectations; it does not independently validate every routing rule. An unsuccessful address inspection now fails the after-disconnect snapshot rather than assuming cleanup succeeded.
