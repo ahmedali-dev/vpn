@@ -4,7 +4,9 @@
   "identifier": "org.tunnelnest.rust",
   "build": {
     "frontendDist": "desktop/ui",
-    "features": ["desktop"]
+    "features": [
+      "desktop"
+    ]
   },
   "app": {
     "windows": [],
@@ -15,14 +17,26 @@
         {
           "identifier": "main-window",
           "description": "Only the bundled main window can request control operations, administrator authorization, and validated profile exports.",
-          "windows": ["main"],
-          "permissions": ["allow-control-request", "allow-connect-full-device", "allow-save-shared-profile"]
+          "windows": [
+            "main"
+          ],
+          "permissions": [
+            "allow-control-request",
+            "allow-connect-full-device",
+            "allow-save-shared-profile",
+            "allow-notification-preferences",
+            "allow-test-notification"
+          ]
         }
       ]
     }
   },
   "bundle": {
     "active": false,
-    "icon": ["desktop/assets/tunnelnest.png", "desktop/assets/tunnelnest.ico", "desktop/assets/tunnelnest.icns"]
+    "icon": [
+      "desktop/assets/tunnelnest.png",
+      "desktop/assets/tunnelnest.ico",
+      "desktop/assets/tunnelnest.icns"
+    ]
   }
 }

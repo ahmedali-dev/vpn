@@ -282,3 +282,13 @@ Normal mode builds downloadable Actions artifacts. `--release` creates and atomi
 Rust dependency caches are separated by distribution/architecture, compiler and native dependency fingerprints. Core archive downloads use an explicit workspace cache on every OS and still undergo release-metadata SHA-256 verification on every restore. Windows additionally caches vcpkg binary packages for OpenSSL; vcpkg checks package ABI compatibility before reuse.
 
 Ordinary Linux/Windows candidates disable release LTO to shorten linking. `rust-v*` release tags retain ThinLTO. The first run (or a compiler/native-dependency change) may still build from scratch. Main pushes no longer cause an extra manual build from the Python helper. Existing tests and per-distribution native package checks remain enabled; native dependency installation is retained rather than relying on an externally published container image.
+
+### Profile diagnostics
+
+Use the Diagnose profile action on a saved profile, or select a profile and choose Diagnose profile above the activity log. Preflight checks system DNS, TCP reachability, certificate dates and the saved TLS verification policy with bounded deadlines. It sends no login credentials and does not start cores or modify routes. Certificate inspection alone does not verify identity; compatibility mode is explicitly reported as unverified. HTTP CONNECT, custom payload, custom core config and REALITY profiles require live session diagnostics instead of a potentially misleading direct probe.
+
+The dialog separately shows an existing connection snapshot, which may belong to a different profile. Authentication, protocol forwarding, proxy HTTPS and VPN routing still require connecting the intended profile; preflight is not a leak test. Export report downloads an allowlisted JSON report without profile names, arguments, credentials, paths or raw logs.
+
+### Desktop notifications
+
+Open **Notifications** in the sidebar to enable private native connection alerts, choose connection/problem categories and background-only delivery, and send a test notification. Settings persist between app launches. Windows and macOS use native system notifications; Linux uses the session notification service, including GNOME/KDE and Hyprland/niri with a running daemon such as mako, dunst or swaync. Alerts omit profile names, credentials and server addresses. See [notification setup and platform tests](docs/notifications.md).

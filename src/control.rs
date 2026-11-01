@@ -46,6 +46,7 @@ pub struct Control {
     helper_only: bool,
     cancel: CancellationToken,
     session: AsyncMutex<Option<Session>>,
+    diagnosing: AsyncMutex<()>,
     store: Mutex<Option<Store>>,
     helper: AsyncMutex<Option<Helper>>,
     helper_failure: Mutex<Option<Value>>,
@@ -67,6 +68,7 @@ impl Control {
             helper_only,
             cancel,
             session: AsyncMutex::new(None),
+            diagnosing: AsyncMutex::new(()),
             store: Mutex::new(store),
             helper: AsyncMutex::new(None),
             helper_failure: Mutex::new(None),
@@ -373,7 +375,11 @@ pub(crate) async fn helper_request(
     let target = url.join(&format!("api/{path}"))?;
     let client = reqwest::Client::builder()
         .no_proxy()
-        .timeout(Duration::from_secs(25))
+        .timeout(Duration::from_secs(if path == "profiles/diagnose" {
+            60
+        } else {
+            25
+        }))
         .build()?;
     let req = if let Some(body) = body {
         client.post(target).json(&body)
@@ -557,6 +563,42 @@ async fn api(c: Arc<Control>, path: &str, req: Request) -> Result<Value> {
             return Ok(serde_json::to_value(Protocol::parse(
                 &read::<Link>(req).await?.link,
             )?)?);
+        }
+        "/api/profiles/diagnose" => {
+            let request = read::<Id>(req).await?;
+            let _guard = c
+                .diagnosing
+                .try_lock()
+                .context("A profile diagnostic is already running")?;
+            let profile = c
+                .store
+                .lock()
+                .unwrap()
+                .as_ref()
+                .context("profiles unavailable")?
+                .list()?
+                .into_iter()
+                .find(|p| p.id == request.id)
+                .context("profile not found")?;
+            ensure!(
+                !profile.locked,
+                "Unlock the profile vault before running diagnostics"
+            );
+            let config = Config::parse(&profile.args).map_err(|_| {
+                anyhow::anyhow!(
+                    "Invalid profile options; edit and save the profile before diagnosing"
+                )
+            })?;
+            let session = c.status().await?;
+            let mut report = crate::diagnostics::run(&config).await;
+            report["currentSession"] = json!({
+                "scope":"Existing connection snapshot taken before preflight; may belong to a different profile. No new authentication or routing test was performed.",
+                "state":session["state"],"checks":session["checks"],
+                "sshAuthenticated":session["connection"]["sshAuthenticated"],
+                "tlsTrust":session["connection"]["tlsTrust"],
+                "sshTrust":session["connection"]["sshTrust"]
+            });
+            return Ok(report);
         }
         "/api/diagnostics" => {
             let s = c.status().await?;

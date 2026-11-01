@@ -1,4 +1,5 @@
 //! Tauri desktop shell around the Rust engine and embedded interface.
+use crate::notifications::{Center, Preferences};
 use crate::{
     config::Config,
     control::{self, helper_request, valid_helper},
@@ -14,7 +15,9 @@ use std::{
     },
     time::Duration,
 };
-use tauri::{RunEvent, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent};
+use tauri::{Manager, RunEvent, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent};
+#[cfg(not(target_os = "macos"))]
+use tauri_plugin_notification::NotificationExt;
 use tokio_util::sync::CancellationToken;
 
 struct DesktopState {
@@ -52,6 +55,7 @@ pub async fn request_control(control: &url::Url, path: &str, body: Option<Value>
         "profiles/save",
         "profiles/delete",
         "profiles/share",
+        "profiles/diagnose",
         "profiles/import-shared",
         "logs/read",
     ]
@@ -78,7 +82,31 @@ async fn control_request(
 ) -> std::result::Result<Value, String> {
     let result = async {
         validate_window(&window)?;
-        request_control(&state.control, &path, body).await
+        let notifications = window.state::<Arc<Center>>();
+        if path == "stop" && body.is_some() && notifications.stopping() {
+            let app = window.app_handle().clone();
+            let center = notifications.inner().clone();
+            tauri::async_runtime::spawn(async move {
+                crate::notifications::notify_event(
+                    &app,
+                    &center,
+                    crate::notifications::Event::Disconnecting,
+                )
+                .await;
+            });
+        }
+        if path == "start" {
+            notifications
+                .intentional_stop
+                .store(false, Ordering::SeqCst);
+        }
+        let result = request_control(&state.control, &path, body).await;
+        if path == "stop" && result.is_err() {
+            notifications
+                .intentional_stop
+                .store(false, Ordering::SeqCst);
+        }
+        result
     }
     .await;
     result.map_err(|e| e.to_string())
@@ -92,6 +120,10 @@ async fn connect_full_device(
 ) -> std::result::Result<Value, String> {
     let result = async {
         validate_window(&window)?;
+        window
+            .state::<Arc<Center>>()
+            .intentional_stop
+            .store(false, Ordering::SeqCst);
         ensure!(
             !state.busy.swap(true, Ordering::SeqCst),
             "Administrator authorization is already in progress"
@@ -121,6 +153,100 @@ async fn save_shared_profile(
     receiver.await.map_err(|e| e.to_string())?
 }
 
+#[tauri::command]
+async fn notification_preferences(
+    window: WebviewWindow,
+    center: tauri::State<'_, Arc<Center>>,
+    settings: Option<Preferences>,
+) -> std::result::Result<Value, String> {
+    validate_window(&window).map_err(|e| e.to_string())?;
+    if let Some(settings) = settings {
+        if settings.enabled {
+            prepare_notifications(window.app_handle()).map_err(|_| "Could not register desktop notifications. Check app configuration and user permissions.".to_string())?;
+            #[cfg(target_os = "macos")]
+            crate::macos_notifications::request_permission()
+                .await
+                .map_err(|e| e.to_string())?;
+            #[cfg(not(target_os = "macos"))]
+            window
+                .app_handle()
+                .notification()
+                .request_permission()
+                .map_err(|e| e.to_string())?;
+        }
+        let center = center.inner().clone();
+        tauri::async_runtime::spawn_blocking(move || center.save(settings))
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|_| "Notification settings could not be saved.".to_string())?;
+    }
+    let report = center.snapshot();
+    #[cfg(target_os = "macos")]
+    let report = {
+        let mut report = report;
+        match crate::macos_notifications::authorization(false).await {
+            Ok(state) => report["systemAuthorization"] = json!(state),
+            Err(error) => {
+                report["systemAuthorization"] = json!("unavailable");
+                report["systemIssue"] = json!(error.to_string());
+            }
+        }
+        report
+    };
+    Ok(report)
+}
+
+#[tauri::command]
+async fn test_notification(
+    window: WebviewWindow,
+    center: tauri::State<'_, Arc<Center>>,
+) -> std::result::Result<Value, String> {
+    validate_window(&window).map_err(|e| e.to_string())?;
+    if !center.preferences().enabled {
+        return Err("Enable and save notifications first.".into());
+    }
+    prepare_notifications(window.app_handle())
+        .map_err(|_| "Could not register desktop notifications.".to_string())?;
+    #[cfg(target_os = "macos")]
+    crate::macos_notifications::request_permission()
+        .await
+        .map_err(|e| e.to_string())?;
+    if let Err(error) = crate::notifications::send(
+        window.app_handle(),
+        "TunnelNest notification test",
+        "Native notifications are working if you can see this message.",
+    )
+    .await
+    {
+        center.delivery_failed();
+        return Err(error.to_string());
+    }
+    Ok(json!({"submitted":true}))
+}
+
+fn prepare_notifications(app: &tauri::AppHandle) -> Result<()> {
+    #[cfg(windows)]
+    {
+        use winreg::{RegKey, enums::HKEY_CURRENT_USER};
+        let icon = crate::store::Store::default_path()?.with_file_name("notification-icon.png");
+        std::fs::create_dir_all(
+            icon.parent()
+                .context("notification icon directory unavailable")?,
+        )?;
+        std::fs::write(&icon, include_bytes!("../desktop/assets/tunnelnest.png"))?;
+        let (key, _) = RegKey::predef(HKEY_CURRENT_USER).create_subkey(format!(
+            r"Software\Classes\AppUserModelId\{}",
+            app.config().identifier
+        ))?;
+        key.set_value("DisplayName", &"TunnelNest Rust")?;
+        key.set_value("IconUri", &icon.to_string_lossy().as_ref())?;
+        key.set_value("IconBackgroundColor", &"0")?;
+    }
+    #[cfg(not(windows))]
+    let _ = app;
+    Ok(())
+}
+
 pub fn run() -> Result<()> {
     ensure!(
         !crate::runtime::is_admin(),
@@ -148,7 +274,13 @@ pub fn run() -> Result<()> {
     };
     let control_url = valid_helper(&raw)?;
     let close_cancel = cancel.clone();
+    let notification_center = Arc::new(Center::open(
+        crate::store::Store::default_path()?.with_file_name("notifications.json"),
+    ));
+    let notification_url = control_url.clone();
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_notification::init())
+        .manage(notification_center.clone())
         .manage(DesktopState {
             control: control_url,
             busy: AtomicBool::new(false),
@@ -156,9 +288,15 @@ pub fn run() -> Result<()> {
         .invoke_handler(tauri::generate_handler![
             control_request,
             connect_full_device,
-            save_shared_profile
+            save_shared_profile,
+            notification_preferences,
+            test_notification
         ])
         .setup(|app| {
+            let center = app.state::<Arc<Center>>();
+            if center.preferences().enabled && prepare_notifications(app.handle()).is_err() {
+                center.delivery_failed();
+            }
             WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                 .title(concat!("TunnelNest · v", env!("CARGO_PKG_VERSION")))
                 .inner_size(1320., 960.)
@@ -188,6 +326,12 @@ pub fn run() -> Result<()> {
             return Err(error.into());
         }
     };
+    let notification_task = runtime.spawn(crate::notifications::watch(
+        app.handle().clone(),
+        notification_url,
+        notification_center,
+        cancel.clone(),
+    ));
     let handle = app.handle().clone();
     let exited = finished.clone();
     let watcher = runtime.spawn(async move {
@@ -225,6 +369,7 @@ pub fn run() -> Result<()> {
     cancel.cancel();
     runtime.block_on(async {
         let _ = tokio::time::timeout(Duration::from_secs(15), watcher).await;
+        let _ = notification_task.await;
     });
     Ok(())
 }

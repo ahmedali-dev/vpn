@@ -11,6 +11,8 @@
     value: Object.freeze({
       request: (path, body) => invoke('control_request', { path, body: body === undefined ? null : body }),
       connectPrivileged: args => invoke('connect_full_device', { args }),
+      notificationSettings: settings => invoke('notification_preferences', { settings: settings === undefined ? null : settings }),
+      testNotification: () => invoke('test_notification'),
       saveShareFile: request => invoke('save_shared_profile', { request }),
     }),
     writable: false,

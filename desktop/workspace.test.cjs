@@ -132,3 +132,65 @@ test('routing rules and local bypass survive profile edits and clear for a new p
  const values=Array.from(vm.runInContext('args()',current.context));assert.equal(JSON.parse(values[values.indexOf('-routing-rules')+1])[0].action,'direct');
  vm.runInContext('newProfile()',current.context);assert.equal(current.element('routingRules').value,'');assert.equal(current.element('bypassLan').checked,false);
 });
+
+
+test('profile diagnostics sends only a saved profile ID and renders stages as text',async()=>{
+ const current=page();const requests=[];
+ current.context.fetch=async(path,options)=>{requests.push([path,options]);return{ok:true,status:200,json:async()=>({result:'failed',checks:[{stage:'TLS',state:'failed',durationMs:3,message:'<script>untrusted server text</script>',nextAction:'Check SNI'}],currentSession:{scope:'May belong to a different profile.',state:'disconnected',checks:{}}})}};
+ await vm.runInContext('runProfileDiagnostics({id:7,name:"Private profile name",args:["-p","private-password"]})',current.context);
+ assert.equal(requests.length,1);assert.equal(requests[0][0],'/api/profiles/diagnose');
+ assert.deepEqual(JSON.parse(requests[0][1].body),{id:7});
+ assert.equal(current.element('profileDiagnosticsDialog').open,true);
+ assert.match(current.element('profileDiagnosticsResults').textContent,/<script>untrusted server text<\/script>/);
+ assert.match(current.element('profileDiagnosticsResults').textContent,/May belong to a different profile/);
+ assert.equal(current.element('downloadProfileDiagnostics').disabled,false);
+});
+test('locked profiles and missing selection cannot start diagnostic network requests',async()=>{
+ const current=page();
+ await vm.runInContext('runProfileDiagnostics(undefined)',current.context);
+ assert.match(current.element('pageError').textContent,/Select a saved profile/);
+ await vm.runInContext('runProfileDiagnostics({id:7,locked:true})',current.context);
+ assert.equal(current.element('vaultNotice').hidden,false);assert.equal(current.requests(),0);
+});
+test('failed profile diagnostic requests do not leave an exportable stale report',async()=>{
+ const current=page();current.context.fetch=async()=>{throw new Error('Control unavailable')};
+ await vm.runInContext('runProfileDiagnostics({id:7,name:"Test"})',current.context);
+ assert.match(current.element('profileDiagnosticsStatus').textContent,/Control unavailable/);
+ assert.equal(current.element('downloadProfileDiagnostics').disabled,true);
+ assert.equal(vm.runInContext('profileDiagnosticBusy',current.context),false);
+});
+
+
+test('notification preferences load and save through the native bridge',async()=>{
+ const current=page(),calls=[];
+ current.context.window={tunnelDesktop:{notificationSettings:async settings=>{calls.push(settings);return{preferences:settings||{enabled:false,connectionUpdates:true,problems:true,backgroundOnly:false},issue:null};}}};
+ await vm.runInContext('openNotificationSettings()',current.context);
+ assert.equal(current.element('notificationsDialog').open,true);assert.equal(current.element('notificationsEnabled').checked,false);
+ assert.equal(current.element('testNotifications').disabled,true);
+ current.element('notificationsEnabled').checked=true;current.element('notificationBackgroundOnly').checked=true;
+ await current.element('saveNotifications').onclick();
+ assert.deepEqual(JSON.parse(JSON.stringify(calls[1])),{enabled:true,connectionUpdates:true,problems:true,backgroundOnly:true});
+ assert.equal(current.element('testNotifications').disabled,false);assert.match(current.element('notificationStatus').textContent,/saved/);
+});
+test('browser-only UI explains why native notification preferences are unavailable',async()=>{
+ const current=page();await vm.runInContext('openNotificationSettings()',current.context);
+ assert.equal(current.element('saveNotifications').disabled,true);assert.equal(current.element('testNotifications').disabled,true);
+ assert.match(current.element('notificationStatus').textContent,/native TunnelNest desktop app/);
+});
+test('notification test reports submission without claiming OS delivery',async()=>{
+ const current=page();let tests=0;current.context.window={tunnelDesktop:{testNotification:async()=>{tests++;}}};
+ await current.element('testNotifications').onclick();assert.equal(tests,1);
+ assert.match(current.element('notificationStatus').textContent,/Test submitted/);
+ assert.match(current.element('notificationStatus').textContent,/Do Not Disturb/);
+});
+
+
+test('macOS notification settings show real denied permission and missing bundle identity',()=>{
+ const current=page();
+ current.context.report={preferences:{enabled:true,connectionUpdates:true,problems:true,backgroundOnly:false},systemAuthorization:'denied',issue:'Generic delivery failure'};
+ vm.runInContext('renderNotificationSettings(report)',current.context);
+ assert.match(current.element('notificationStatus').textContent,/System Settings/);
+ current.context.report.systemIssue='Open TunnelNest.app to use macOS notifications.';
+ vm.runInContext('renderNotificationSettings(report)',current.context);
+ assert.match(current.element('notificationStatus').textContent,/Open TunnelNest.app/);
+});

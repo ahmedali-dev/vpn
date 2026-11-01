@@ -59,3 +59,17 @@ test('native string errors become readable errors for connection feedback', asyn
   vm.runInNewContext(bridge, { window });
   await assert.rejects(window.tunnelDesktop.connectPrivileged(['-tun']), /Required networking core is missing/);
 });
+
+
+test('native notifications use fixed commands and private boolean preferences',async()=>{
+ const calls=[];const window={__TAURI__:{core:{invoke:async(command,args)=>{calls.push({command,args});return{preferences:{enabled:true}};}}}};window.top=window;
+ vm.runInNewContext(bridge,{window});
+ await window.tunnelDesktop.notificationSettings();
+ const preferences={enabled:true,connectionUpdates:true,problems:true,backgroundOnly:false};
+ await window.tunnelDesktop.notificationSettings(preferences);await window.tunnelDesktop.testNotification();
+ assert.deepEqual(JSON.parse(JSON.stringify(calls)),[
+  {command:'notification_preferences',args:{settings:null}},
+  {command:'notification_preferences',args:{settings:preferences}},
+  {command:'test_notification'},
+ ]);
+});
