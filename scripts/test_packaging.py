@@ -40,6 +40,21 @@ class PackagingTests(unittest.TestCase):
                 cargo.assert_called_once()
                 self.assertEqual((root/'dist/runtime/linux-arm64/tunnel').read_bytes(),b'fake engine')
 
+    def test_candidate_profile_packages_the_same_profile_that_was_compiled(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=pathlib.Path(folder);(root/'scripts').mkdir();(root/'target/ci').mkdir(parents=True)
+            (root/'target/ci/tunnel').write_bytes(b'candidate fixture')
+            script=root/'scripts/build.py';shutil.copy2(pathlib.Path(__file__).with_name('build.py'),script)
+            with patch('platform.system',return_value='Linux'), patch('platform.machine',return_value='x86_64'), patch('subprocess.run') as cargo, patch.dict(os.environ,{'TUNNEL_PACKAGE_TARGET':'linux-x64','TUNNEL_CARGO_PROFILE':'ci','CARGO_TARGET_DIR':str(root/'target')},clear=False):
+                runpy.run_path(str(script),run_name='__main__')
+                command=cargo.call_args.args[0]
+                self.assertEqual(command[command.index('--profile')+1],'ci')
+                self.assertEqual((root/'dist/runtime/linux-x64/tunnel').read_bytes(),b'candidate fixture')
+            with patch('platform.system',return_value='Linux'), patch('platform.machine',return_value='x86_64'), patch('subprocess.run') as cargo, patch.dict(os.environ,{'TUNNEL_PACKAGE_TARGET':'linux-x64','TUNNEL_CARGO_PROFILE':'../bad'},clear=False):
+                with self.assertRaisesRegex(SystemExit,'must be release or ci'):
+                    runpy.run_path(str(script),run_name='__main__')
+                cargo.assert_not_called()
+
     def test_arm64_native_packaging_rejects_non_ubuntu_distributions(self):
         with self.assertRaisesRegex(ValueError, 'require linux-x64'):
             build_package(self.root, self.root / 'missing-runtime', 'linux-arm64',

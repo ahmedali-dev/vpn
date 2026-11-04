@@ -17,7 +17,10 @@ key = f'{system}-{arch}'
 requested = os.environ.get('TUNNEL_PACKAGE_TARGET', key)
 if requested != key:
     raise SystemExit(f'This script builds natively ({key}). Build {requested} on its matching runner.')
-build = ['cargo', 'build', '--release', '--locked']
+profile = os.environ.get('TUNNEL_CARGO_PROFILE', 'release')
+if profile not in ('release', 'ci'):
+    raise SystemExit('TUNNEL_CARGO_PROFILE must be release or ci')
+build = ['cargo', 'build', '--locked', '--profile', profile]
 if os.environ.get('TUNNELNEST_CLI_ONLY') != '1':
     build += ['--features', 'desktop']
 subprocess.run(build, cwd=ROOT, check=True)
@@ -27,5 +30,5 @@ if not target_dir.is_absolute():
     target_dir = ROOT / target_dir
 runtime = ROOT / 'dist' / 'runtime' / key
 runtime.mkdir(parents=True, exist_ok=True)
-shutil.copy2(target_dir / 'release' / name, runtime / name)
+shutil.copy2(target_dir / profile / name, runtime / name)
 print(f'Built {runtime / name}')

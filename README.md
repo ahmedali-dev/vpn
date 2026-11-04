@@ -279,9 +279,9 @@ Normal mode builds downloadable Actions artifacts. `--release` creates and atomi
 
 ### Faster GitHub builds
 
-Rust dependency caches are separated by distribution/architecture, compiler and native dependency fingerprints. Core archive downloads use an explicit workspace cache on every OS and still undergo release-metadata SHA-256 verification on every restore. Windows additionally caches vcpkg binary packages for OpenSSL; vcpkg checks package ABI compatibility before reuse.
+Rust dependency caches are separated by distribution/architecture, compiler and native dependency fingerprints. Core archive downloads use an explicit workspace cache on every OS and still undergo release-metadata SHA-256 verification on every restore. Windows additionally caches the installed OpenSSL headers/libraries and skips vcpkg installation on a complete exact-key hit, with binary packages retained as a fallback; vcpkg checks package ABI compatibility before reuse.
 
-Ordinary Linux/Windows candidates disable release LTO to shorten linking. `rust-v*` release tags retain ThinLTO. The first run (or a compiler/native-dependency change) may still build from scratch. Main pushes no longer cause an extra manual build from the Python helper. Existing tests and per-distribution native package checks remain enabled; native dependency installation is retained rather than relying on an externally published container image.
+Ordinary Linux/Windows candidates use one `ci` Cargo profile for Clippy, tests and packaging: basic optimization, no debug symbols, no LTO, with debug assertions and overflow checks retained. This reuses dependency builds rather than building both debug and release dependencies for every preview. `rust-v*` tags still package the standard optimized release profile with ThinLTO. Local builders default to release; set `TUNNEL_CARGO_PROFILE=ci` for a candidate. The new profile starts a fresh Rust cache generation, avoiding old full-debug artifacts. The first run (or a compiler/native-dependency change) may still build from scratch. Main pushes no longer cause an extra manual build from the Python helper. Existing tests and per-distribution native package checks remain enabled; native dependency installation is retained rather than relying on an externally published container image.
 
 ### Profile diagnostics
 
@@ -292,3 +292,11 @@ The dialog separately shows an existing connection snapshot, which may belong to
 ### Desktop notifications
 
 Open **Notifications** in the sidebar to enable private native connection alerts, choose connection/problem categories and background-only delivery, and send a test notification. Settings persist between app launches. Windows and macOS use native system notifications; Linux uses the session notification service, including GNOME/KDE and Hyprland/niri with a running daemon such as mako, dunst or swaync. Alerts omit profile names, credentials and server addresses. See [notification setup and platform tests](docs/notifications.md).
+
+macOS validation omits full debug symbols to reduce compile/link work and cache size. All existing tests, schema checks and package smoke tests remain enabled. New runs cancel outdated preview runs for the same branch; tagged releases are never cancelled by this concurrency setting. Actual GitHub timing improvements must be measured on subsequent runs; cold caches and release optimizations still cost time.
+
+### Feature and service structure
+
+Business behavior now lives under `src/features`, technical services under `src/infrastructure`, and HTTP/native entry adapters under `src/interfaces`. The desktop UI uses formatted feature controllers with a small startup script. Each module has a purpose comment. See [the project structure guide](docs/PROJECT-STRUCTURE.md) for the complete tree, feature ownership, safe extension points and UI loading rules. Existing public Rust paths, profile data and CLI/API contracts are preserved.
+
+Optional encrypted cross-device profiles and manual release checking: [Shared library guide](docs/SHARED-LIBRARY.md).

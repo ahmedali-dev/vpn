@@ -77,3 +77,6 @@ dialog[open]{animation:enterDialog .18s ease-out}dialog[open]::backdrop{animatio
 #profileDiagnosticsResults{white-space:pre-wrap;overflow-wrap:anywhere;max-height:55vh;overflow:auto;padding:16px;border:1px solid var(--border,#dce3d6);border-radius:8px;font-size:12px;line-height:1.6}#profileDiagnosticsStatus{margin:12px 0;font-size:13px}
 
 .notificationActions{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px}#notificationStatus{white-space:pre-wrap;overflow-wrap:anywhere}
+
+/* Shared library and manual update dialogs. */
+#mongoDialog,#updatesDialog{width:min(680px,calc(100vw - 32px));max-height:90vh}#mongoDialog .editorBody,#updatesDialog .editorBody{display:grid;gap:16px;overflow:auto}#mongoCredentials{display:grid;gap:16px}#mongoCredentials[hidden]{display:none}.mongoProfile{display:flex;align-items:center;gap:12px;padding:14px 0;border-bottom:1px solid var(--line,#ddd)}.mongoProfile span{flex:1;overflow-wrap:anywhere}.releaseNotes{white-space:pre-wrap;overflow-wrap:anywhere;max-height:40vh;overflow:auto;font:inherit}#mongoStatus,#updateStatus{overflow-wrap:anywhere}.libraryTools{flex-wrap:wrap}@media(max-width:600px){.mongoProfile{flex-wrap:wrap}.mongoProfile span{flex-basis:100%}}

@@ -1,22 +1,19 @@
-pub mod config;
-pub mod control;
-pub mod core;
-pub mod diagnostics;
-mod hostname;
-pub mod logging;
-pub mod network;
-pub mod notifications;
-pub mod recovery;
-pub mod routing;
-pub mod runtime;
-pub mod sharing;
-pub mod store;
-pub mod traffic;
-pub mod transport;
-pub mod tun;
+//! TunnelNest application library.
+//!
+//! Feature implementations live in features/, technical adapters in infrastructure/, entry interfaces in interfaces/. Stable root exports preserve existing callers.
 
+pub mod features;
+pub mod infrastructure;
+pub mod interfaces;
+pub use features::profiles::sharing;
+pub use features::{
+    configuration as config, connections as runtime, diagnostics, notifications, recovery, routing,
+    traffic, tun,
+};
+pub(crate) use infrastructure::hostname;
+pub use infrastructure::{cores as core, logging, network, persistence as store, transport};
+pub use interfaces::control;
 #[cfg(feature = "desktop")]
-pub mod desktop;
-
+pub use interfaces::desktop;
 #[cfg(all(feature = "desktop", target_os = "macos"))]
-mod macos_notifications;
+pub(crate) use interfaces::macos_notifications;

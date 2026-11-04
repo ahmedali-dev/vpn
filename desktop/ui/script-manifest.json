@@ -1,0 +1,19 @@
+[
+  "shared/state.js",
+  "features/profile-editor.js",
+  "features/profile-library.js",
+  "features/profile-arguments.js",
+  "features/connection.js",
+  "features/diagnostics.js",
+  "features/notifications.js",
+  "features/activity.js",
+  "features/saved-logs.js",
+  "features/sharing.js",
+  "features/vault.js",
+  "features/trust.js",
+  "features/dashboard.js",
+  "features/navigation.js",
+  "features/updates.js",
+  "features/cloud-library.js",
+  "app.js"
+]

@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const bridge = fs.readFileSync(__dirname + '/tauri-bridge.js', 'utf8');
-const api = fs.readFileSync(__dirname + '/ui/app.js', 'utf8').split('\nfunction setMode()')[0];
+const api = require('./test-support/ui-source.cjs').applicationSource().split('\nfunction setMode()')[0];
 
 test('Tauri serves control requests without exposing a token or using browser fetch', async () => {
   const calls = [];

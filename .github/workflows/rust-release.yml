@@ -13,12 +13,10 @@ permissions:
 
 env:
   TUNNEL_CORE_CACHE_DIR: ${{ github.workspace }}/dist/core-downloads
-  # Fast candidates; published release tags retain the existing ThinLTO settings.
-  CARGO_PROFILE_RELEASE_LTO: ${{ startsWith(github.ref, 'refs/tags/rust-v') && 'thin' || 'off' }}
 
 concurrency:
   group: rust-release-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/rust-v') }}
 
 jobs:
   build-linux:
@@ -104,9 +102,10 @@ jobs:
       - name: Cache Rust dependencies by distribution and architecture
         uses: Swatinem/rust-cache@v2
         with:
+          prefix-key: v1-shared-ci
           workspaces: . -> target
           key: ${{ matrix.distro }}-${{ matrix.target }}
-          env-vars: NATIVE_DEPS_KEY CARGO_PROFILE_RELEASE_LTO
+          env-vars: NATIVE_DEPS_KEY
           cache-bin: false
           cache-on-failure: true
       - name: Cache verified core download archives
@@ -124,14 +123,16 @@ jobs:
       - name: Check Rust formatting and code
         run: |
           cargo fmt --all --check
-          cargo clippy --locked --all-targets --features desktop -- -D warnings
+          cargo clippy --profile ci --locked --all-targets --features desktop -- -D warnings
       - name: Test Rust engine, native exports, and core schemas
-        run: cargo test --locked --features desktop
+        run: cargo test --profile ci --locked --features desktop
       - name: Test shared interface
         run: |
           npm ci --prefix desktop --ignore-scripts --no-audit --no-fund
           node --test desktop/*.test.cjs
       - name: Build native application
+        env:
+          TUNNEL_CARGO_PROFILE: ${{ startsWith(github.ref, 'refs/tags/rust-v') && 'release' || 'ci' }}
         run: python3 scripts/build.py
       - name: Package distribution-specific application and cores
         env:
@@ -200,6 +201,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Cannot identify the runner vcpkg revision' }
           "revision=$revision-$env:ImageVersion" >> "$env:GITHUB_OUTPUT"
           "NATIVE_DEPS_KEY=windows-2022-x64-windows-static-md-$revision" >> "$env:GITHUB_ENV"
+          "openssl-path=$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows-static-md" >> "$env:GITHUB_OUTPUT"
           New-Item -ItemType Directory -Force "$env:RUNNER_TEMP/vcpkg-binary-cache" | Out-Null
       - name: Cache Windows OpenSSL binary packages
         uses: actions/cache@v4
@@ -207,14 +209,26 @@ jobs:
           path: ${{ runner.temp }}/vcpkg-binary-cache
           key: vcpkg-windows-2022-x64-windows-static-md-${{ steps.vcpkg-cache-key.outputs.revision }}
           restore-keys: vcpkg-windows-2022-x64-windows-static-md-
+      - name: Restore installed Windows OpenSSL
+        id: openssl-installed
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ steps.vcpkg-cache-key.outputs.openssl-path }}
+          key: openssl-installed-windows-2022-static-md-${{ steps.vcpkg-cache-key.outputs.revision }}
       - name: Install Windows OpenSSL
         env:
           VCPKG_BINARY_SOURCES: clear;files,${{ runner.temp }}/vcpkg-binary-cache,readwrite
         shell: pwsh
         run: |
-          & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" install openssl:x64-windows-static-md
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $openssl = "$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows-static-md"
+          $required = @("$openssl/include/openssl/ssl.h", "$openssl/lib/libssl.lib", "$openssl/lib/libcrypto.lib")
+          $complete = @($required | Where-Object { -not (Test-Path $_) }).Count -eq 0
+          if ("${{ steps.openssl-installed.outputs.cache-hit }}" -ne 'true' -or -not $complete) {
+            & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" install openssl:x64-windows-static-md
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } else {
+            Write-Host 'Using cached OpenSSL installation; no vcpkg rebuild required.'
+          }
           "OPENSSL_DIR=$openssl" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "OPENSSL_LIB_DIR=$openssl/lib" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "OPENSSL_INCLUDE_DIR=$openssl/include" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
@@ -222,6 +236,12 @@ jobs:
           $sslHash = (Get-FileHash "$openssl/lib/libssl.lib" -Algorithm SHA256).Hash
           $cryptoHash = (Get-FileHash "$openssl/lib/libcrypto.lib" -Algorithm SHA256).Hash
           "NATIVE_DEPS_KEY=${env:NATIVE_DEPS_KEY}-$sslHash-$cryptoHash" >> "$env:GITHUB_ENV"
+      - name: Save verified Windows OpenSSL installation
+        if: steps.openssl-installed.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ steps.vcpkg-cache-key.outputs.openssl-path }}
+          key: openssl-installed-windows-2022-static-md-${{ steps.vcpkg-cache-key.outputs.revision }}
       - name: Install stable Rust
         run: |
           rustup toolchain install stable --profile minimal --component rustfmt --component clippy
@@ -229,9 +249,10 @@ jobs:
       - name: Cache Windows Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
+          prefix-key: v1-shared-ci
           workspaces: . -> target
           key: windows-2022-win32-x64
-          env-vars: NATIVE_DEPS_KEY CARGO_PROFILE_RELEASE_LTO
+          env-vars: NATIVE_DEPS_KEY
           cache-bin: false
           cache-on-failure: true
       - name: Cache verified core download archives
@@ -247,14 +268,16 @@ jobs:
       - name: Check Rust formatting and code
         run: |
           cargo fmt --all --check
-          cargo clippy --locked --all-targets --features desktop -- -D warnings
+          cargo clippy --profile ci --locked --all-targets --features desktop -- -D warnings
       - name: Test Rust engine, native exports, and core schemas
-        run: cargo test --locked --features desktop
+        run: cargo test --profile ci --locked --features desktop
       - name: Test shared interface
         run: |
           npm ci --prefix desktop --ignore-scripts --no-audit --no-fund
           node --test desktop/*.test.cjs
       - name: Build native application
+        env:
+          TUNNEL_CARGO_PROFILE: ${{ startsWith(github.ref, 'refs/tags/rust-v') && 'release' || 'ci' }}
         run: python3 scripts/build.py
       - name: Smoke-test packaged Windows executables
         run: |

@@ -6,6 +6,9 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: macos-validation-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   validate:
     name: Native ${{ matrix.target }} checks
@@ -22,6 +25,8 @@ jobs:
       TUNNELNEST_REQUIRE_CORES: '1'
       GH_TOKEN: ${{ github.token }}
       OPENSSL_STATIC: '1'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
       MACOSX_DEPLOYMENT_TARGET: '11.0'
       TUNNEL_CORE_CACHE_DIR: ${{ github.workspace }}/dist/core-downloads
     steps:
@@ -46,7 +51,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
-          env-vars: NATIVE_DEPS_KEY MACOSX_DEPLOYMENT_TARGET
+          env-vars: NATIVE_DEPS_KEY MACOSX_DEPLOYMENT_TARGET CARGO_PROFILE_DEV_DEBUG CARGO_PROFILE_TEST_DEBUG
           cache-bin: false
           cache-on-failure: true
       - name: Cache verified core download archives

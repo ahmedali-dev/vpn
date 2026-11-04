@@ -3,7 +3,7 @@ const test=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const vm=require('node:vm');
-const source=fs.readFileSync(__dirname+'/ui/app.js','utf8').split('\nfunction setMode()')[0];
+const source=require('./test-support/ui-source.cjs').applicationSource().split('\nfunction setMode()')[0];
 function page({hash='',storage=new Map(),fetch=async()=>({ok:true,status:200,json:async()=>({ok:true})}),blocked=false}={}){
  const location={hash,pathname:'/',search:''};
  const context=vm.createContext({document:{},location,history:{replaceState(_state,_title,url){location.hash='';location.url=url}},sessionStorage:{setItem(k,v){if(blocked)throw Error('blocked');storage.set(k,v)},getItem(k){return storage.get(k)},removeItem(k){storage.delete(k)}},fetch});

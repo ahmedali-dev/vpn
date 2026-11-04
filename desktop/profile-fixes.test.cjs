@@ -1,8 +1,16 @@
 const test=require('node:test'),assert=require('node:assert/strict'),vm=require('node:vm'),fs=require('node:fs');
-function fixture(){
+function fixture(separate=false){
  const elements=new Map();const el=id=>{if(!elements.has(id))elements.set(id,{value:'',checked:false,hidden:false,textContent:'',addEventListener(name,fn){this[name]=fn},reset(){},append(){},dispatchEvent(){},classList:{add(){},remove(){},toggle(){}}});return elements.get(id)};
  const context=vm.createContext({document:{getElementById:el,querySelectorAll:()=>[],addEventListener(){},querySelector:()=>el('connectionView')},location:{hash:'#test',pathname:'/'},history:{replaceState(){}},TextDecoder,TextEncoder,atob,btoa,URL,Event:class{},setTimeout(){},clearTimeout(){},TunnelNestProfileOptions:require('./ui/profile-options.js'),fetch:async()=>({ok:true,json:async()=>context.imported})});
- const source=fs.readFileSync(__dirname+'/ui/app.js','utf8');vm.runInContext(source.slice(0,source.lastIndexOf('setMode();loadProfiles();poll();')),context);
+ const source=require('./test-support/ui-source.cjs').applicationSource();
+ if(separate){
+  const path=require('node:path');
+  for(const file of JSON.parse(fs.readFileSync(__dirname+'/ui/script-manifest.json','utf8'))){
+   let text=fs.readFileSync(path.join(__dirname,'ui',file),'utf8');
+   if(file==='app.js')text=text.slice(0,text.indexOf('// START APPLICATION'));
+   vm.runInContext(text,context,{filename:file});
+  }
+ }else vm.runInContext(source.slice(0,source.lastIndexOf('// START APPLICATION')),context);
  return{el,context,run:code=>vm.runInContext(code,context)};
 }
 test('VLESS and Trojan editor edits survive save without dropping unknown query options',async()=>{
@@ -26,4 +34,14 @@ test('observed SSH key requires explicit verification and matching server before
 test('custom TUN editor values replace old flags and restore on reopening',()=>{
  const{el,context,run}=fixture();context.saved=['-mode','ssh','-H','example.com','-tun-address4','10.83.0.1/30','-tun-address6','fd23:4567::1/126','-tun-stack','gvisor','-tun-mtu','1400'];run('applyArgs(saved)');assert.equal(el('tunAddress4').value,'10.83.0.1/30');assert.equal(el('tunStack').value,'gvisor');
  el('tunStack').value='system';const args=run('args()');assert.equal(args.filter(f=>f==='-tun-stack').length,1);assert.equal(args[args.indexOf('-tun-stack')+1],'system');assert.equal(args[args.indexOf('-tun-mtu')+1],'1400');
+});
+
+test('feature controllers load as separate strict scripts in the declared browser order',()=>{
+ const {el,run}=fixture(true);
+ const manifest=JSON.parse(fs.readFileSync(__dirname+'/ui/script-manifest.json','utf8'));
+ const html=fs.readFileSync(__dirname+'/ui/index.html','utf8');
+ let position=-1;
+ for(const file of manifest){const next=html.indexOf('src="'+file+'"');assert.ok(next>position,'script order mismatch: '+file);position=next;}
+ assert.equal(run('typeof readProfile'),'function');assert.equal(run('typeof args'),'function');assert.equal(run('typeof refreshTrust'),'function');
+ assert.equal(typeof el('useObservedKey').onclick,'function');
 });

@@ -19,6 +19,26 @@ async fn authenticated_control_and_static_assets() {
         cancel.clone(),
     );
     let app = router(control);
+    let modules: Vec<String> =
+        serde_json::from_str(include_str!("../desktop/ui/script-manifest.json")).unwrap();
+    for module in modules {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/{module}"))
+                    .header("host", "127.0.0.1:12345")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "missing bundled UI module: {module}"
+        );
+    }
     for (path, host, auth, origin, status) in [
         (
             "/api/status",
@@ -287,5 +307,40 @@ async fn diagnostics_export_includes_authenticated_recovery_metadata() {
         assert!(diagnostics.get("recovery").is_some());
         assert!(diagnostics.get("health").is_some());
         assert!(!diagnostics.to_string().contains(&token));
+    }
+}
+
+#[tokio::test]
+async fn cloud_and_update_endpoints_are_forbidden_to_helpers() {
+    let token = "c".repeat(64);
+    let app = router(Control::new(
+        "127.0.0.1:12345".into(),
+        token.clone(),
+        true,
+        None,
+        CancellationToken::new(),
+    ));
+    for path in [
+        "mongo/connect",
+        "mongo/load",
+        "mongo/save",
+        "mongo/import",
+        "updates/check",
+        "updates/open",
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/{path}"))
+                    .header("host", "127.0.0.1:12345")
+                    .header("x-tunnel-token", &token)
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 }

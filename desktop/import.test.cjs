@@ -20,8 +20,8 @@ test('switching VMess links and profiles clears old SNI overrides', async () => 
       return {ok:true,json:async()=>({Protocol:'vmess',Address:data.add,Port:+data.port,Network:data.net,
         Host:data.host || '',Path:data.path,SNISource:data.sni?'link':data.host?'host':'server',SNI:data.sni || '',EffectiveSNI:data.sni || data.host || data.add})};
     }});
-  const source = fs.readFileSync(__dirname+'/ui/app.js','utf8');
-  vm.runInContext(source.slice(0, source.lastIndexOf('setMode();loadProfiles();poll();')),context);
+  const source = require('./test-support/ui-source.cjs').applicationSource();
+  vm.runInContext(source.slice(0, source.lastIndexOf('// START APPLICATION')),context);
   const link = host => 'vmess://'+Buffer.from(JSON.stringify({add:host?'us-23.hihu.net':'fr2.vpnjantit.com',
     host:host?'web.whatsapp.com':'',port:host?'443':'8080',net:'ws',path:host?'/wovfpasr':'/vpnjantit'})).toString('base64');
   element('mode').value='xray';

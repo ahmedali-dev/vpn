@@ -11,8 +11,8 @@ function page(){
  const context=vm.createContext({document:{getElementById:element,querySelectorAll:()=>[],querySelector:()=>element('connectionView'),addEventListener(){}},
   location:{hash:'#test'},TunnelNestProfileInput:require('./ui/profile-input.js'),TunnelNestProfileOptions:require('./ui/profile-options.js'),Event:class{},
   setTimeout(){},clearTimeout(){},TextDecoder,TextEncoder,atob,btoa,fetch:async()=>{requests++;throw new Error('Unexpected network request')}});
- const source=fs.readFileSync(__dirname+'/ui/app.js','utf8');
- vm.runInContext(source.slice(0,source.lastIndexOf('setMode();loadProfiles();poll();')),context);
+ const source=require('./test-support/ui-source.cjs').applicationSource();
+ vm.runInContext(source.slice(0,source.lastIndexOf('// START APPLICATION')),context);
  return{context,element,requests:()=>requests};
 }
 test('dropped shared profiles are staged for review without saving or connecting',async()=>{
