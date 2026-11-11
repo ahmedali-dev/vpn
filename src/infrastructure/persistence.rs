@@ -45,7 +45,7 @@ impl Store {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
         }
-        db.execute_batch("PRAGMA secure_delete=ON; CREATE TABLE IF NOT EXISTS cloud_profile_links(profile_id INTEGER NOT NULL,scope TEXT NOT NULL,remote_id TEXT NOT NULL,PRIMARY KEY(profile_id,scope)); CREATE TABLE IF NOT EXISTS profiles(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL UNIQUE,mode TEXT NOT NULL,args TEXT NOT NULL,updated_at TEXT NOT NULL,session_only INTEGER NOT NULL DEFAULT 0); CREATE TABLE IF NOT EXISTS vault_metadata(id INTEGER PRIMARY KEY CHECK(id=1),mode TEXT NOT NULL,salt TEXT NOT NULL,check_value TEXT NOT NULL);")?;
+        db.execute_batch("PRAGMA secure_delete=ON; CREATE TABLE IF NOT EXISTS cloud_links(scope TEXT NOT NULL,remote_id TEXT NOT NULL,profile_id INTEGER NOT NULL,fingerprint TEXT NOT NULL,PRIMARY KEY(scope,remote_id)); CREATE TABLE IF NOT EXISTS profiles(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL UNIQUE,mode TEXT NOT NULL,args TEXT NOT NULL,updated_at TEXT NOT NULL,session_only INTEGER NOT NULL DEFAULT 0); CREATE TABLE IF NOT EXISTS vault_metadata(id INTEGER PRIMARY KEY CHECK(id=1),mode TEXT NOT NULL,salt TEXT NOT NULL,check_value TEXT NOT NULL);")?;
         let mode = db
             .query_row("SELECT mode FROM vault_metadata WHERE id=1", [], |r| {
                 r.get::<_, String>(0)
@@ -243,26 +243,74 @@ impl Store {
         }
         anyhow::bail!("too many duplicate profile names")
     }
-    /// Allocate a stable remote identity before upload so retries never duplicate profiles.
-    pub fn cloud_id(&self, id: i64, scope: &str) -> Result<String> {
-        self.get(id)?;
-        let candidate = crate::infrastructure::mongo_library::MongoLibrary::new_id();
-        self.db.execute(
-            "INSERT OR IGNORE INTO cloud_profile_links(profile_id,scope,remote_id) VALUES(?,?,?)",
-            params![id, scope, candidate],
-        )?;
-        Ok(self.db.query_row(
-            "SELECT remote_id FROM cloud_profile_links WHERE profile_id=? AND scope=?",
-            params![id, scope],
-            |r| r.get(0),
-        )?)
+    /// Stable cloud identities and content fingerprints prevent duplicate uploads and lost local edits.
+    fn fingerprint(&self, p: &Profile) -> Result<String> {
+        use sha2::{Digest, Sha256};
+        // Include the vault key so the sync marker cannot become a password-guessing oracle.
+        let mut hash = Sha256::new();
+        hash.update(b"TunnelNest cloud sync v1");
+        hash.update(self.key()?);
+        hash.update(serde_json::to_vec(&(&p.name, &p.mode, &p.args))?);
+        Ok(hex::encode(hash.finalize()))
     }
-    pub fn link_cloud(&self, id: i64, scope: &str, remote_id: &str) -> Result<()> {
+    pub fn cloud_lookup(&self, scope: &str, id: i64) -> Result<Option<String>> {
+        Ok(self
+            .db
+            .query_row(
+                "SELECT remote_id FROM cloud_links WHERE scope=? AND profile_id=?",
+                params![scope, id],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+    pub fn cloud_remote(&self, scope: &str, id: i64) -> Result<String> {
+        if let Some(remote) = self
+            .db
+            .query_row(
+                "SELECT remote_id FROM cloud_links WHERE scope=? AND profile_id=?",
+                params![scope, id],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()?
+        {
+            return Ok(remote);
+        }
+        let remote = hex::encode(random::<12>());
         self.db.execute(
-            "INSERT OR REPLACE INTO cloud_profile_links(profile_id,scope,remote_id) VALUES(?,?,?)",
-            params![id, scope, remote_id],
+            "INSERT INTO cloud_links VALUES(?,?,?,?)",
+            params![scope, remote, id, ""],
+        )?;
+        Ok(remote)
+    }
+    pub fn cloud_bind(&self, scope: &str, remote: &str, p: &Profile) -> Result<()> {
+        self.db.execute(
+            "INSERT OR REPLACE INTO cloud_links VALUES(?,?,?,?)",
+            params![scope, remote, p.id, self.fingerprint(p)?],
         )?;
         Ok(())
+    }
+    pub fn cloud_receive(&mut self, scope: &str, remote: &str, mut p: Profile) -> Result<bool> {
+        let link = self
+            .db
+            .query_row(
+                "SELECT profile_id,fingerprint FROM cloud_links WHERE scope=? AND remote_id=?",
+                params![scope, remote],
+                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
+            )
+            .optional()?;
+        let saved = if let Some((id, fingerprint)) = link
+            && let Ok(existing) = self.get(id)
+        {
+            if self.fingerprint(&existing)? != fingerprint {
+                return Ok(false);
+            }
+            p.id = id;
+            self.save(p)?
+        } else {
+            self.import(p)?
+        };
+        self.cloud_bind(scope, remote, &saved)?;
+        Ok(true)
     }
     pub fn delete(&mut self, id: i64) -> Result<()> {
         ensure!(
@@ -270,7 +318,7 @@ impl Store {
             "profile not found"
         );
         self.db
-            .execute("DELETE FROM cloud_profile_links WHERE profile_id=?", [id])?;
+            .execute("DELETE FROM cloud_links WHERE profile_id=?", [id])?;
         self.session.remove(&id);
         Ok(())
     }

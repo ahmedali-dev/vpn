@@ -43,3 +43,6 @@ Desktop.ini
 
 # Local VPN acceptance reports contain public IPs and route details
 /vpn-test-results/
+
+# Independent management application repository
+/ManagementServer/

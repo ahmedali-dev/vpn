@@ -12,6 +12,8 @@ permissions:
   contents: read
 
 env:
+  # Public API URL only. Never inject a database URI into desktop binaries.
+  TUNNEL_CLOUD_URL: ${{ vars.CLOUD_API_URL }}
   TUNNEL_CORE_CACHE_DIR: ${{ github.workspace }}/dist/core-downloads
 
 concurrency:

@@ -34,7 +34,7 @@ pub struct Control {
     cancel: CancellationToken,
     session: AsyncMutex<Option<Session>>,
     diagnosing: AsyncMutex<()>,
-    mongo: AsyncMutex<Option<Arc<crate::infrastructure::mongo_library::MongoLibrary>>>,
+    cloud: AsyncMutex<Option<crate::infrastructure::cloud::Cloud>>,
     store: Mutex<Option<Store>>,
     helper: AsyncMutex<Option<Helper>>,
     helper_failure: Mutex<Option<Value>>,
@@ -52,10 +52,10 @@ struct LogCursor {
 
 mod api;
 mod assets;
+mod cloud;
 mod diagnostics;
 mod helper;
 mod http;
-mod library;
 mod server;
 mod service;
 pub use diagnostics::diagnostics;

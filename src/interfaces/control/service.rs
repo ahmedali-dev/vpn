@@ -44,7 +44,7 @@ impl Control {
             cancel,
             session: AsyncMutex::new(None),
             diagnosing: AsyncMutex::new(()),
-            mongo: AsyncMutex::new(None),
+            cloud: AsyncMutex::new(None),
             store: Mutex::new(store),
             helper: AsyncMutex::new(None),
             helper_failure: Mutex::new(None),

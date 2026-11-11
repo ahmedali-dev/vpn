@@ -211,7 +211,21 @@ function renderProfiles() {
     diagnose.title = "Diagnose profile";
     diagnose.setAttribute("aria-label", "Diagnose profile · " + p.name);
     diagnose.onclick = () => runProfileDiagnostics(p);
-    actions.append(run, edit, share, diagnose, del);
+    const upload = document.createElement("button");
+    upload.className = "secondary";
+    upload.type = "button";
+    upload.textContent = "↑";
+    upload.title = "Upload to cloud";
+    upload.setAttribute("aria-label", "Upload to cloud · " + p.name);
+    upload.onclick = () => uploadCloud(p);
+    const cloudDelete = document.createElement("button");
+    cloudDelete.className = "textbutton danger";
+    cloudDelete.type = "button";
+    cloudDelete.textContent = "☁ ×";
+    cloudDelete.title = "Delete from cloud";
+    cloudDelete.setAttribute("aria-label", "Delete from cloud · " + p.name);
+    cloudDelete.onclick = () => deleteCloud(p);
+    actions.append(run, edit, share, diagnose, upload, cloudDelete, del);
     card.append(title, meta, actions);
     if (activeProfileId === p.id) {
       const failure = profileFailure(latestStatus, connectionState);
@@ -289,12 +303,6 @@ $("saveProfile").onclick = async () => {
     return;
   }
   if ($("saveProfile").disabled) return;
-  const uploadToMongo = $("saveMongo").checked;
-  if (uploadToMongo && !$("rememberCredentials").checked) {
-    $("error").textContent =
-      "Enable Remember credentials to save this profile to the shared library.";
-    return;
-  }
   $("saveProfile").disabled = true;
   $("saveTop").disabled = true;
   try {
@@ -307,7 +315,6 @@ $("saveProfile").onclick = async () => {
     });
     currentProfileId = p.id;
     await loadProfiles();
-    if (uploadToMongo) await saveSelectedToMongo(p.id);
     $("error").textContent = "Profile saved locally.";
     showProfiles();
   } catch (e) {

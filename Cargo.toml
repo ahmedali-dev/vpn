@@ -29,7 +29,6 @@ hex = "0.4"
 httparse = "1"
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
 libc = "0.2"
-mongodb = { version = "3.9.1", features = ["redact-errors"] }
 openssl = "0.10"
 percent-encoding = "2"
 rand = "0.8"

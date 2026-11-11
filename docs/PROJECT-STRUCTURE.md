@@ -121,10 +121,8 @@ Existing paths such as `tunnelnest::runtime::Session`, `tunnelnest::config::Conf
 
 Run `cargo fmt --all --check`, strict Clippy and `cargo test --profile ci --locked --features desktop`. Run the desktop Node tests and Python tooling suite as before. Native Windows/Linux/macOS authorization and live full-device routing still require real-device acceptance testing; a source refactor and local fixtures do not certify those behaviors.
 
-## Optional shared library and updates
+## Updates
 
 - `src/features/updates.rs`: manual GitHub release comparison and fixed release URLs.
-- `src/infrastructure/mongo_library.rs`: MongoDB TLS, encrypted records, passphrase verification and keychain settings.
-- `src/interfaces/control/library.rs`: shared-library API use cases and bounded network waits.
-- `desktop/ui/features/cloud-library.js` and `updates.js`: independent settings and update dialogs.
-- `tests/mongo_library.rs`: isolated driver wire fixture; no external database credentials.
+- `desktop/ui/features/updates.js`: update-check dialog.
+- `desktop/updates.test.cjs`: manual update-check UI tests.

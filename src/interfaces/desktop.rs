@@ -64,14 +64,12 @@ pub async fn request_control(control: &url::Url, path: &str, body: Option<Value>
         "logs/read",
         "updates/check",
         "updates/open",
-        "mongo/connect",
-        "mongo/load",
-        "mongo/disconnect",
-        "mongo/forget",
-        "mongo/list",
-        "mongo/save",
-        "mongo/import",
-        "mongo/delete",
+        "cloud/connect",
+        "cloud/logout",
+        "cloud/status",
+        "cloud/upload",
+        "cloud/delete",
+        "cloud/refresh",
     ]
     .contains(&path);
     ensure!(

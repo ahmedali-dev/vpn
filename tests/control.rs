@@ -311,7 +311,7 @@ async fn diagnostics_export_includes_authenticated_recovery_metadata() {
 }
 
 #[tokio::test]
-async fn cloud_and_update_endpoints_are_forbidden_to_helpers() {
+async fn update_and_cloud_endpoints_are_forbidden_to_helpers() {
     let token = "c".repeat(64);
     let app = router(Control::new(
         "127.0.0.1:12345".into(),
@@ -321,12 +321,11 @@ async fn cloud_and_update_endpoints_are_forbidden_to_helpers() {
         CancellationToken::new(),
     ));
     for path in [
-        "mongo/connect",
-        "mongo/load",
-        "mongo/save",
-        "mongo/import",
         "updates/check",
         "updates/open",
+        "cloud/connect",
+        "cloud/upload",
+        "cloud/refresh",
     ] {
         let response = app
             .clone()

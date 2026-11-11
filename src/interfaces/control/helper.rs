@@ -140,11 +140,13 @@ pub(crate) async fn helper_request(
     let target = url.join(&format!("api/{path}"))?;
     let client = reqwest::Client::builder()
         .no_proxy()
-        .timeout(Duration::from_secs(if path == "profiles/diagnose" {
-            60
-        } else {
-            25
-        }))
+        .timeout(Duration::from_secs(
+            if path == "profiles/diagnose" || path == "cloud/refresh" {
+                60
+            } else {
+                25
+            },
+        ))
         .build()?;
     let req = if let Some(body) = body {
         client.post(target).json(&body)

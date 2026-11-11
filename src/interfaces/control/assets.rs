@@ -122,10 +122,10 @@ pub(super) fn asset(path: &str) -> Response {
             )),
             "text/javascript; charset=utf-8",
         ),
-        "/features/cloud-library.js" => (
+        "/features/cloud.js" => (
             include_bytes!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/desktop/ui/features/cloud-library.js"
+                "/desktop/ui/features/cloud.js"
             )),
             "text/javascript; charset=utf-8",
         ),

@@ -21,6 +21,7 @@ jobs:
           - runner: macos-15-intel
             target: darwin-x64
     env:
+      TUNNEL_CLOUD_URL: ${{ vars.CLOUD_API_URL }}
       TUNNEL_PACKAGE_TARGET: ${{ matrix.target }}
       TUNNELNEST_REQUIRE_CORES: '1'
       GH_TOKEN: ${{ github.token }}

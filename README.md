@@ -299,4 +299,6 @@ macOS validation omits full debug symbols to reduce compile/link work and cache 
 
 Business behavior now lives under `src/features`, technical services under `src/infrastructure`, and HTTP/native entry adapters under `src/interfaces`. The desktop UI uses formatted feature controllers with a small startup script. Each module has a purpose comment. See [the project structure guide](docs/PROJECT-STRUCTURE.md) for the complete tree, feature ownership, safe extension points and UI loading rules. Existing public Rust paths, profile data and CLI/API contracts are preserved.
 
-Optional encrypted cross-device profiles and manual release checking: [Shared library guide](docs/SHARED-LIBRARY.md).
+Manual release checking: [Update guide](docs/UPDATES.md).
+
+Cloud upload and refresh: [Cloud profiles guide](docs/CLOUD.md).

@@ -28,8 +28,8 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 pub(super) async fn api(c: Arc<Control>, path: &str, req: Request) -> Result<Value> {
-    if path.starts_with("/api/mongo/") {
-        return super::library::handle(c, path, req).await;
+    if path.starts_with("/api/cloud/") {
+        return super::cloud::handle(c, path, req).await;
     }
     match path {
         "/api/updates/check" => {
