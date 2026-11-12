@@ -97,3 +97,88 @@ fn web_vmess_without_sni_override_preserves_the_link_sni() {
     assert!(!c.flags.contains_key("v2ray-sni"));
     assert_eq!(c.protocol().unwrap().sni, "web.whatsapp.com");
 }
+
+/// Exercise the actual HTTP client against a public API, with no auth or database.
+#[tokio::test]
+async fn public_api_add_update_refresh_delete_without_authentication() {
+    use axum::{
+        Router,
+        body::to_bytes,
+        extract::{Request, State},
+        response::Json,
+        routing::any,
+    };
+    use serde_json::{Value, json};
+    use std::sync::{Arc, Mutex};
+    use tunnelnest::infrastructure::cloud::{Cloud, Connect};
+
+    #[derive(Default)]
+    struct PublicApi {
+        record: Option<Value>,
+        methods: Vec<String>,
+    }
+    async fn handle(State(state): State<Arc<Mutex<PublicApi>>>, req: Request) -> Json<Value> {
+        assert!(!req.headers().contains_key("authorization"));
+        assert!(!req.headers().contains_key("cookie"));
+        let method = req.method().to_string();
+        let path = req.uri().path().to_owned();
+        if path == "/api/public/status" {
+            assert_eq!(method, "GET");
+            return Json(json!({"public":true,"version":1}));
+        }
+        assert!(
+            req.headers()
+                .get("origin")
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with("http://127.0.0.1:")
+        );
+        let bytes = to_bytes(req.into_body(), 65536).await.unwrap();
+        let mut api = state.lock().unwrap();
+        api.methods.push(method.clone());
+        match method.as_str() {
+            "PUT" => {
+                let mut value: Value = serde_json::from_slice(&bytes).unwrap();
+                value["id"] = json!(path.rsplit('/').next().unwrap());
+                api.record = Some(value);
+                Json(json!({"server":{"id":path.rsplit('/').next().unwrap()}}))
+            }
+            "GET" => Json(json!({"servers":api.record.iter().collect::<Vec<_>>(),"next":null})),
+            "DELETE" => {
+                api.record = None;
+                Json(json!({"ok":true}))
+            }
+            _ => panic!("Unexpected public API request"),
+        }
+    }
+    let state = Arc::new(Mutex::new(PublicApi::default()));
+    let app = Router::new()
+        .route("/api/public/{*path}", any(handle))
+        .with_state(state.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let cloud = Cloud::connect(Connect { url }).await.unwrap();
+    let id = "0123456789abcdef01234567";
+    cloud.upload(id, &profile()).await.unwrap();
+    let mut edited = profile();
+    edited.name = "Updated through public API".into();
+    cloud.upload(id, &edited).await.unwrap();
+    let records = cloud.download().await.unwrap();
+    assert_eq!(
+        records.len(),
+        1,
+        "Updating must retain the original remote ID"
+    );
+    assert_eq!(records[0].id, id);
+    assert_eq!(records[0].name, edited.name);
+    assert_eq!(records[0].credentials.password, "password");
+    cloud.delete(id).await.unwrap();
+    assert!(cloud.download().await.unwrap().is_empty());
+    assert_eq!(
+        state.lock().unwrap().methods,
+        ["PUT", "PUT", "GET", "DELETE", "GET"]
+    );
+    task.abort();
+}

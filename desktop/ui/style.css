@@ -82,3 +82,6 @@ dialog[open]{animation:enterDialog .18s ease-out}dialog[open]::backdrop{animatio
 #updatesDialog{width:min(680px,calc(100vw - 32px));max-height:90vh}#updatesDialog .editorBody{display:grid;gap:16px;overflow:auto}.releaseNotes{white-space:pre-wrap;overflow-wrap:anywhere;max-height:40vh;overflow:auto;font:inherit}#updateStatus{overflow-wrap:anywhere}.libraryTools{flex-wrap:wrap}
 
 #cloudDialog{width:min(620px,calc(100vw - 32px));max-height:90vh}#cloudDialog .editorBody,#cloudSignIn{display:grid;gap:16px}#cloudSignIn[hidden]{display:none}#cloudIdentity,#cloudStatus{overflow-wrap:anywhere}
+
+/* Cloud feedback stays visible above the library, independent of connection polling. */
+.operationFeedback{position:sticky;top:12px;z-index:60;display:flex;align-items:center;justify-content:space-between;gap:16px;margin:16px 0;padding:14px 18px;border:1px solid #bbcbae;border-radius:10px;background:#f1f6e9;color:#304b25;box-shadow:0 4px 16px #29422112;overflow-wrap:anywhere}.operationFeedback[hidden]{display:none}.operationFeedback[data-kind="error"]{background:#fff1ed;border-color:#dba99a;color:#8b3024}.operationFeedback[data-kind="success"]{background:#eaf4df;border-color:#91b478}.operationFeedback button{flex-shrink:0}#cloudConfirmDialog{max-width:540px}#cloudConfirmText{white-space:pre-wrap;overflow-wrap:anywhere}

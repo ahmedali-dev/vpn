@@ -1,3 +1,15 @@
+async function confirmProfileDelete(name) {
+  const dialog = $("profileDeleteDialog");
+  $("profileDeleteText").textContent = `Delete “${name}” from this device?`;
+  return new Promise((resolve) => {
+    let accepted = false;
+    dialog.onclose = () => resolve(accepted);
+    $("confirmProfileDelete").onclick = () => { accepted = true; dialog.close(); };
+    $("cancelProfileDelete").onclick = () => dialog.close();
+    dialog.showModal();
+  });
+}
+
 "use strict";
 
 /**
@@ -180,13 +192,16 @@ function renderProfiles() {
     del.innerHTML = actionIcon("trash") + "<span>Delete</span>";
     del.disabled = selected && isRunning();
     del.onclick = async () => {
-      if (!confirm("Delete this saved profile?")) return;
+      if (!(await confirmProfileDelete(p.name))) return;
+      showOperationMessage(`Deleting “${p.name}” from this device…`);
       try {
         await api("profiles/delete", { id: p.id });
         if (activeProfileId === p.id) activeProfileId = 0;
         await loadProfiles();
+        showOperationMessage(`“${p.name}” deleted from this device.`, "success");
       } catch (e) {
-        $("pageError").textContent = e.message;
+        const reason = typeof e === "string" ? e : e?.message || "Unexpected error. Please retry.";
+        showOperationMessage(`Could not delete “${p.name}”: ${reason}`, "error");
       }
     };
     const share = document.createElement("button");
@@ -215,8 +230,8 @@ function renderProfiles() {
     upload.className = "secondary";
     upload.type = "button";
     upload.textContent = "↑";
-    upload.title = "Upload to cloud";
-    upload.setAttribute("aria-label", "Upload to cloud · " + p.name);
+    upload.title = "Add / update in cloud";
+    upload.setAttribute("aria-label", "Add / update in cloud · " + p.name);
     upload.onclick = () => uploadCloud(p);
     const cloudDelete = document.createElement("button");
     cloudDelete.className = "textbutton danger";

@@ -17,7 +17,7 @@ pub struct Cloud {
 pub fn default_url() -> String {
     option_env!("TUNNEL_CLOUD_URL")
         .filter(|s| !s.trim().is_empty())
-        .unwrap_or("http://127.0.0.1:3000")
+        .unwrap_or("https://tunnelnest-management-server-two.vercel.app")
         .to_owned()
 }
 #[derive(Clone, Default, Deserialize, Serialize)]
@@ -73,15 +73,25 @@ pub fn base_url(raw: &str) -> Result<url::Url> {
 }
 async fn response(mut r: reqwest::Response) -> Result<Value> {
     let status = r.status();
-    ensure!(
-        status.is_success(),
-        "{}",
-        if status == reqwest::StatusCode::UNAUTHORIZED {
-            "Cloud access was rejected by the server."
-        } else {
-            "Cloud request failed. Check the server configuration and account access."
-        }
-    );
+    if !status.is_success() {
+        let reason = match status.as_u16() {
+            400 => {
+                "The API rejected this profile. Check its name, server address and saved credentials."
+            }
+            401 => "This URL requires authentication; select the public management API.",
+            403 => "The API rejected the request origin. Check APP_URL on the management server.",
+            404 => {
+                "The cloud record or API endpoint was not found. Refresh the library and check the cloud URL."
+            }
+            413 => "This profile exceeds the API size limit.",
+            429 => "The API is busy. Wait and retry.",
+            500..=599 => {
+                "The management API is unavailable. Check its production configuration and database connection."
+            }
+            _ => "Check the API URL and server configuration.",
+        };
+        anyhow::bail!("Cloud request failed (HTTP {}): {reason}", status.as_u16());
+    }
     let mut bytes = vec![];
     while let Some(chunk) = r.chunk().await.context("Cloud response interrupted")? {
         ensure!(
@@ -131,6 +141,8 @@ impl Cloud {
             .request(method, self.base.join(path)?)
             .header("Origin", self.base.origin().ascii_serialization()))
     }
+    /// Public PUT creates or updates one stable record; retries never create duplicates.
+    /// Only the management API connects to MongoDB. No cloud credentials are sent.
     pub async fn upload(&self, id: &str, p: &Profile) -> Result<()> {
         ensure!(
             !p.session_only,

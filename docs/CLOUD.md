@@ -5,7 +5,7 @@ No cloud account or sign-in is required. All users share one public list and may
 ## App buttons
 
 - **Refresh from cloud** downloads the public servers into the encrypted local profile vault. Unlock the local vault first; this local password protects your device and is unrelated to cloud access.
-- **Upload to cloud** (↑ on a profile) publishes its credentials after a destination/public-sharing confirmation. Retrying updates the same cloud record.
+- **Add / update in cloud** (↑ on a profile) publishes its credentials after a destination/public-sharing confirmation. Retrying updates the same cloud record.
 - **Delete from cloud** (☁ × on a profile) deletes the shared record for everyone and retains the local copy.
 - **Cloud library** lets you change the public API URL. No username or password is requested.
 
@@ -13,7 +13,7 @@ Refresh skips profiles with unsynced local edits. Upload explicitly to replace t
 
 ## Builds and deployment
 
-Set the TunnelNest repository **variable** `CLOUD_API_URL` to the deployed management origin, e.g. `https://management.example.com`. GitHub Actions passes it to `TUNNEL_CLOUD_URL`, which is embedded in desktop builds. For a local build, export `TUNNEL_CLOUD_URL` before running the macOS build script. If unset, the local development default is `http://127.0.0.1:3000`.
+Set the TunnelNest repository **variable** `CLOUD_API_URL` to the deployed management origin, e.g. `https://management.example.com`. GitHub Actions passes it to `TUNNEL_CLOUD_URL`, which is embedded in desktop builds. For a local build, export `TUNNEL_CLOUD_URL` before running the macOS build script. If unset, builds use `https://tunnelnest-management-server-two.vercel.app`. For local backend development set `TUNNEL_CLOUD_URL=http://127.0.0.1:3000`.
 
 Remote origins require verified HTTPS. Loopback HTTP is allowed for development. Redirects are refused. The desktop never needs or receives `MONGODB_URI`.
 
@@ -22,3 +22,9 @@ ManagementServer reads `MONGODB_URI` and its credential encryption key at runtim
 The management website remains owner-only. Anonymous API calls are restricted to records explicitly marked public; old private server records are never automatically published. New servers created on the management site are public. Configure and redeploy the updated ManagementServer before distributing the app's API URL.
 
 Cloud credentials are encrypted in MongoDB but deliberately downloadable through the public API. Anyone can remove public records. Keep local copies or backups and use only accounts intended for public access.
+
+## API used by TunnelNest
+
+The app checks `GET /api/public/status`, refreshes with `GET /api/public/servers`, adds or updates with `PUT /api/public/servers/:id`, and deletes with `DELETE /api/public/servers/:id`. PUT uses the same saved remote ID for subsequent updates and retries. Edit and save a local profile, then click **Add / update in cloud** to publish its changes. Requests carry the API origin and JSON only; no Authorization header, cloud password, login cookie, or database connection is used.
+
+Cloud changes use an in-app confirmation dialog, including in native desktop WebViews. Progress, success, cancellation and failure messages stay in the banner above the connection list until dismissed; VPN status polling does not overwrite them. HTTP failures include a status code and a configuration hint.

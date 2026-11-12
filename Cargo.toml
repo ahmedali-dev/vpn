@@ -1,6 +1,6 @@
 [package]
 name = "tunnelnest"
-version = "2.1.0"
+version = "2.2.0"
 edition = "2024"
 description = "TunnelNest Rust tunnel engine and local desktop control service"
 
